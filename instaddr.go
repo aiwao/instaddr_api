@@ -290,8 +290,12 @@ func (a *Account) CreateAddressWithExpiration(o Options) (*MailAccount, error) {
     return mailAcc, nil
 }
 
-//TODO: domain listを作る
-func (a *Account) CreateAddressWithDomainAndName(o Options, domain, name string) (*MailAccount, error) {
+type OptionsWithName struct {
+    Name string
+    Options
+}
+
+func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain string) (*MailAccount, error) {
     c := o.client()
     c.Jar = a.Jar
     var prevTime int64
@@ -307,7 +311,7 @@ func (a *Account) CreateAddressWithDomainAndName(o Options, domain, name string)
         q.Set("csrf_token_check", a.CSRFToken)
         q.Set("csrf_subtoken_check", a.CSRFSubToken)
         q.Set("newdomain", domain)
-        q.Set("newuser", name)
+        q.Set("newuser", o.Name)
         prevTime = time.Now().Unix()
         q.Set("_", strconv.FormatInt(prevTime, 10))
         parse.RawQuery = q.Encode()
@@ -336,7 +340,7 @@ func (a *Account) CreateAddressWithDomainAndName(o Options, domain, name string)
     q.Set("csrf_token_check", a.CSRFToken)
     q.Set("csrf_subtoken_check", a.CSRFSubToken)
     q.Set("newdomain", domain)
-    q.Set("newuser", name)
+    q.Set("newuser", o.Name)
     q.Set("recaptcha_token", "")
     q.Set("_", strconv.FormatInt(prevTime+1, 10))
     parse.RawQuery = q.Encode()
@@ -615,7 +619,6 @@ type OptionsSendMail struct {
 func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject, content, to string) (*SendMailResponse, error) {
     c := o.client()
     c.Jar = a.Jar
-    startTime := time.Now()
 
     //Get hash and uuid
     hash := ""
@@ -627,7 +630,7 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
         }
         q := url.Values{}
         q.Set("passcodelock", "off")
-        q.Set("t", strconv.FormatInt(startTime.Unix(), 10))
+        q.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
         q.Set("version", version)
         parse.RawQuery = q.Encode()
         req, err := http.NewRequest("GET", parse.String(), nil)
@@ -802,4 +805,47 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
         }
     }
     return &sendMailRes, nil
+}
+
+func (a *Account) GetMailDomains(o Options) ([]string, error) {
+    domains := []string{}
+    c := o.client()
+    c.Jar = a.Jar
+    parse, err := url.Parse(indexURL)
+    if err != nil {
+        return nil, err
+    }
+    q := url.Values{}
+    q.Set("UID", "")
+    q.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
+    q.Set("version", version)
+    q.Set("request_unread", "1")
+    parse.RawQuery = q.Encode()
+    req, err := http.NewRequest("GET", parse.String(), nil)
+    if err != nil {
+        return nil, err
+    }
+    req.Header.Set("User-Agent", o.ua())
+    req.Header.Set("X-Requested-With", xRequestWith)
+    res, err := c.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer res.Body.Close()
+    b, err := io.ReadAll(res.Body)
+    if err != nil {
+        return nil, err
+    }
+
+    doc, err := htmlquery.Parse(strings.NewReader(string(b)))
+    if err != nil {
+        return nil, err
+    }
+    nodes := htmlquery.Find(doc, `//*input[@type="radio", @name="input_manualmaildomain"]`)
+    for _, n := range nodes {
+        if v := htmlquery.SelectAttr(n, "value"); v != "" && strings.Contains(v, ".") {
+            domains = append(domains, v)
+        }
+    }
+    return domains, nil
 }

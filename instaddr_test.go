@@ -33,7 +33,16 @@ func TestCreateAddressWithDomainAndName(t *testing.T) {
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressWithDomainAndName(Options{}, "mail4.uk", "")
+    domains, err := account.GetMailDomains(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    domain := "mail4.uk"
+    if len(domains) > 0 {
+        domain = domains[0]
+    }
+    t.Log(domain)
+    mailAcc, err := account.CreateAddressWithDomainAndName(OptionsWithName{}, domain)
     if err != nil {
         t.Fatal(err)
     }
@@ -157,6 +166,21 @@ func TestSendMail(t *testing.T) {
         t.Fatal(err)
     }
     t.Log(res.Result)
+}
+
+func TestGetMailDomains(t *testing.T) {
+    account, err := NewAccount(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    domains, err := account.GetMailDomains(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Log(len(domains))
+    for _, domain := range domains {
+        t.Log(domain)
+    }
 }
 
 func TestUA(t *testing.T) {
