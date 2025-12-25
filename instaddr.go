@@ -561,7 +561,7 @@ func (a *Account) DownloadAttachment(client *http.Client, attachment Attachment)
         c = http.DefaultClient
     }
     c.Jar = a.Jar
-    parse, err := url.Parse(indexURL)
+    parse, err := url.Parse(openAttachURL)
     if err != nil {
         return nil, err
     }
