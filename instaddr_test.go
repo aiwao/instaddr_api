@@ -6,7 +6,7 @@ import (
 )
 
 func TestNewAccount(t *testing.T) {
-    account, err := NewAccount(nil)
+    account, err := NewAccount(Options{})
     if err != nil {
         t.Fatal(err)
     }
@@ -17,11 +17,11 @@ func TestNewAccount(t *testing.T) {
 }
 
 func TestCreateAddressWithExpiration(t *testing.T) {
-    account, err := NewAccount(nil)
+    account, err := NewAccount(Options{})
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressWithExpiration(nil)
+    mailAcc, err := account.CreateAddressWithExpiration(Options{})
     if err != nil {
         t.Fatal(err)
     }
@@ -29,11 +29,11 @@ func TestCreateAddressWithExpiration(t *testing.T) {
 }
 
 func TestCreateAddressWithDomainAndName(t *testing.T) {
-    account, err := NewAccount(nil)
+    account, err := NewAccount(Options{})
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressWithDomainAndName(nil, "mail4.uk", "")
+    mailAcc, err := account.CreateAddressWithDomainAndName(Options{}, "mail4.uk", "")
     if err != nil {
         t.Fatal(err)
     }
@@ -41,11 +41,11 @@ func TestCreateAddressWithDomainAndName(t *testing.T) {
 }
 
 func TestCreateAddressRandom(t *testing.T) {
-    account, err := NewAccount(nil)
+    account, err := NewAccount(Options{})
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressRandom(nil)
+    mailAcc, err := account.CreateAddressRandom(Options{})
     if err != nil {
         t.Fatal(err)
     }
@@ -53,17 +53,17 @@ func TestCreateAddressRandom(t *testing.T) {
 }
 
 func TestSearchMail(t *testing.T) {
-    account, err := NewAccount(nil)
+    account, err := NewAccount(Options{})
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressRandom(nil)
+    mailAcc, err := account.CreateAddressRandom(Options{})
     if err != nil {
         t.Fatal(err)
     }
     t.Log(mailAcc.Address)
     time.Sleep(60 * time.Second)
-    previews, err := account.SearchMail(nil, mailAcc.Address)
+    previews, err := account.SearchMail(Options{}, mailAcc.Address)
     if err != nil {
         t.Fatal(err)
     }
@@ -76,23 +76,23 @@ func TestSearchMail(t *testing.T) {
 }
 
 func TestViewMail(t *testing.T) {
-    account, err := NewAccount(nil)
+    account, err := NewAccount(Options{})
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressRandom(nil)
+    mailAcc, err := account.CreateAddressRandom(Options{})
     if err != nil {
         t.Fatal(err)
     }
     t.Log(mailAcc.Address)
     time.Sleep(60 * time.Second)
-    previews, err := account.SearchMail(nil, mailAcc.Address)
+    previews, err := account.SearchMail(Options{}, mailAcc.Address)
     if err != nil {
         t.Fatal(err)
     }
     t.Log(len(previews))
     for _, preview := range previews {
-        mail, err := account.ViewMail(nil, preview)
+        mail, err := account.ViewMail(Options{}, preview)
         if err != nil {
             t.Fatal(err)
         }
@@ -107,23 +107,23 @@ func TestViewMail(t *testing.T) {
 }
 
 func TestDownloadAttachment(t *testing.T) {
-    account, err := NewAccount(nil)
+    account, err := NewAccount(Options{})
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressRandom(nil)
+    mailAcc, err := account.CreateAddressRandom(Options{})
     if err != nil {
         t.Fatal(err)
     }
     t.Log(mailAcc.Address)
     time.Sleep(60 * time.Second)
-    previews, err := account.SearchMail(nil, mailAcc.Address)
+    previews, err := account.SearchMail(Options{}, mailAcc.Address)
     if err != nil {
         t.Fatal(err)
     }
     t.Log(len(previews))
     for _, preview := range previews {
-        mail, err := account.ViewMail(nil, preview)
+        mail, err := account.ViewMail(Options{}, preview)
         if err != nil {
             t.Fatal(err)
         }
@@ -133,7 +133,7 @@ func TestDownloadAttachment(t *testing.T) {
             t.Log(attachment.FileID)
             t.Log(attachment.FileKey)
             t.Log(attachment.Table)
-            b, err := account.DownloadAttachment(nil, attachment)
+            b, err := account.DownloadAttachment(Options{}, attachment)
             if err != nil {
                 t.Log(err)
                 continue
@@ -143,8 +143,24 @@ func TestDownloadAttachment(t *testing.T) {
     }
 }
 
+func TestSendMail(t *testing.T) {
+    account, err := NewAccount(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    mailAcc, err := account.CreateAddressRandom(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    res, err := account.SendMail(OptionsSendMail{}, mailAcc, "Hello", "Konichiwa", "zebyo749@f5.si")
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Log(res.Result)
+}
+
 func TestUA(t *testing.T) {
     for i := 0; i < 10; i++ {
-        t.Log(ua())
+        t.Log(randUA())
     }
 }
