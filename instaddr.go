@@ -12,6 +12,7 @@ import (
     "net/http/cookiejar"
     "net/textproto"
     "net/url"
+    "os"
     "regexp"
     "strconv"
     "strings"
@@ -549,9 +550,7 @@ func (a *Account) ViewMail(o Options, mailPreview MailPreview) (*Mail, error) {
             continue
         }
         src := match[1]
-        fmt.Println("gegege: " + src)
         if strings.Contains(src, "smphone.app.attachopener.php") {
-            fmt.Println("gregergr:  " + src)
             attach := Attachment{}
             parsedAttachURL, err := url.Parse("https://" + src)
             if err != nil {
@@ -601,9 +600,11 @@ func (a *Account) DownloadAttachment(o Options, attachment Attachment) ([]byte, 
 }
 
 type UploadFileData struct {
-    Filename string
-    Body     []byte
-    FileType textproto.MIMEHeader
+    Filename   string
+    FileBody   *os.File
+    BufferBody *bytes.Buffer
+    ReaderBody *bytes.Reader
+    FileType   string
 }
 
 type SendMailResponse struct {
@@ -623,6 +624,7 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
     //Get hash and uuid
     hash := ""
     uuid := ""
+    startTime := time.Now()
     {
         parse, err := url.Parse(newURL)
         if err != nil {
@@ -630,7 +632,7 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
         }
         q := url.Values{}
         q.Set("passcodelock", "off")
-        q.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
+        q.Set("t", strconv.FormatInt(startTime.Unix(), 10))
         q.Set("version", version)
         parse.RawQuery = q.Encode()
         req, err := http.NewRequest("GET", parse.String(), nil)
@@ -681,20 +683,20 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
         return nil, errors.New("no uuid found")
     }
 
-    {
+    if len(o.Files) > 0 {
         for _, file := range o.Files {
-            //Prepare upload
+            //Register file hash
             {
-                parse, err := url.Parse(fileUploadURL)
+                parse, err := url.Parse(newURL)
                 if err != nil {
                     return nil, err
                 }
                 form := url.Values{}
-                form.Set("action", "prepareUpload2")
+                form.Set("action", "registFileHashToken")
+                form.Set("nopost", "1")
                 form.Set("file_hash", hash)
-                form.Set("totalcount", "1")
-                form.Set("totalsize", strconv.Itoa(len(file.Body)))
-                form.Set("upload_files", fmt.Sprintf(`{"0":{"filename":"%s","size":%d}}`, file.Filename, len(file.Body)))
+                form.Set("csrf_token_check", a.CSRFToken)
+                form.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
                 req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
                 if err != nil {
                     return nil, err
@@ -708,58 +710,132 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
                 }
                 res.Body.Close()
             }
-
-            //Upload file
-            b := &bytes.Buffer{}
-            mw := multipart.NewWriter(b)
-            mw.WriteField("action", "uploadFile2")
-            mw.WriteField("service", "MailNow")
-            mw.WriteField("ajax", "1")
-            mw.WriteField("ajax_back", "1")
-            mw.WriteField("file_hash", hash)
-            mw.WriteField("filecnt", "1")
-            mw.WriteField("uuid", uuid)
-            mw.WriteField("file_1_name", file.Filename)
-            mw.WriteField("file_1_size", strconv.Itoa(len(file.Body)))
-            fileType := "text/plain"
-            ext := ""
-            split := strings.Split(file.Filename, ".")
-            if len(split) > 0 {
-                ext = split[len(split)-1]
-            }
-            if ext != "" {
-                tempType := mime.TypeByExtension(ext)
-                if tempType != "" {
-                    fileType = tempType
+            //Open file uploader
+            {
+                parse, err := url.Parse(fileUploadURL)
+                if err != nil {
+                    return nil, err
                 }
+                form := url.Values{}
+                form.Set("file_hash", hash)
+                form.Set("autolang", "en")
+                form.Set("open_by_app", "1")
+                req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+                if err != nil {
+                    return nil, err
+                }
+                req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                req.Header.Set("User-Agent", o.ua())
+                req.Header.Set("X-Requested-With", xRequestWith)
+                res, err := c.Do(req)
+                if err != nil {
+                    return nil, err
+                }
+                res.Body.Close()
             }
-            mw.WriteField("file_1_type", fileType)
+            //Prepare upload
+            fileSize := int64(-1)
+            var fileBody io.Reader = nil
+            {
+                if file.FileBody != nil {
+                    fileBody = file.FileBody
+                    stat, err := file.FileBody.Stat()
+                    if err != nil {
+                        continue
+                    }
+                    fileSize = stat.Size()
+                } else if file.BufferBody != nil {
+                    fileBody = file.BufferBody
+                    fileSize = int64(file.BufferBody.Len())
+                } else if file.ReaderBody != nil {
+                    fileBody = file.ReaderBody
+                    fileSize = file.ReaderBody.Size()
+                }
+                if fileSize == -1 || fileBody == nil {
+                    continue
+                }
 
-            h := make(textproto.MIMEHeader)
-            h.Set("Content-Disposition",
-                `form-data; name="file"; filename="`+file.Filename+`"`)
-            h.Set("Content-Type", fileType)
-            part, _ := mw.CreatePart(h)
-            io.Copy(part, bytes.NewBuffer(file.Body))
+                parse, err := url.Parse(fileUploadURL)
+                if err != nil {
+                    return nil, err
+                }
+                form := url.Values{}
+                form.Set("action", "prepareUpload2")
+                form.Set("file_hash", hash)
+                form.Set("totalcount", "1")
+                form.Set("totalsize", strconv.FormatInt(fileSize, 10))
+                form.Set("upload_files", fmt.Sprintf(`{"0":{"filename":"%s","size":%d}}`, file.Filename, fileSize))
+                req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+                if err != nil {
+                    return nil, err
+                }
+                req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                req.Header.Set("User-Agent", o.ua())
+                req.Header.Set("X-Requested-With", xRequestWith)
+                res, err := c.Do(req)
+                if err != nil {
+                    return nil, err
+                }
+                res.Body.Close()
+            }
+            //Upload file
+            {
+                b := &bytes.Buffer{}
+                mw := multipart.NewWriter(b)
+                mw.SetBoundary("----WebKitFormBoundaryOPM6JgABuuyKiaeP")
+                mw.WriteField("action", "uploadFile2")
+                mw.WriteField("service", "MailNow")
+                mw.WriteField("ajax", "1")
+                mw.WriteField("ajax_back", "1")
+                mw.WriteField("file_hash", hash)
+                mw.WriteField("filecnt", "1")
+                mw.WriteField("uuid", uuid)
+                mw.WriteField("file_1_name", file.Filename)
+                mw.WriteField("file_1_size", strconv.FormatInt(fileSize, 10))
 
-            mw.Close()
+                fileType := "text/plain"
+                if file.FileType != "" {
+                    fileType = file.FileType
+                } else {
+                    ext := ""
+                    split := strings.Split(file.Filename, ".")
+                    if len(split) > 0 {
+                        ext = split[len(split)-1]
+                    }
+                    if ext != "" {
+                        tempType := mime.TypeByExtension("." + ext)
+                        if tempType != "" {
+                            fileType = tempType
+                        }
+                    }
+                }
+                mw.WriteField("file_1_type", fileType)
 
-            parse, err := url.Parse(fileUploadURL)
-            if err != nil {
-                return nil, err
+                h := make(textproto.MIMEHeader)
+                h.Set("Content-Disposition", `form-data; name="file_1"; filename="`+file.Filename+`"`)
+                h.Set("Content-Type", fileType)
+                part, _ := mw.CreatePart(h)
+                io.Copy(part, fileBody)
+
+                mw.Close()
+
+                parse, err := url.Parse(fileUploadURL)
+                if err != nil {
+                    return nil, err
+                }
+                req, err := http.NewRequest("POST", parse.String(), b)
+                if err != nil {
+                    return nil, err
+                }
+                req.Header.Set("Content-Type", mw.FormDataContentType())
+                req.Header.Set("User-Agent", o.ua())
+                req.Header.Set("X-Requested-With", xRequestWith)
+                res, err := c.Do(req)
+                if err != nil {
+                    return nil, err
+                }
+                res.Body.Close()
             }
-            req, err := http.NewRequest("POST", parse.String(), b)
-            if err != nil {
-                return nil, err
-            }
-            req.Header.Set("Content-Type", mw.FormDataContentType())
-            req.Header.Set("User-Agent", o.ua())
-            req.Header.Set("X-Requested-With", xRequestWith)
-            res, err := c.Do(req)
-            if err != nil {
-                return nil, err
-            }
-            res.Body.Close()
         }
     }
 

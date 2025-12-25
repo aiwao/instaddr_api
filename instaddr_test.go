@@ -1,6 +1,7 @@
 package instaddr
 
 import (
+    "os"
     "testing"
     "time"
 )
@@ -161,7 +162,13 @@ func TestSendMail(t *testing.T) {
     if err != nil {
         t.Fatal(err)
     }
-    res, err := account.SendMail(OptionsSendMail{}, mailAcc, "Hello", "Konichiwa", "zebyo749@f5.si")
+    file, err := os.Open("hello.txt")
+    if err != nil {
+        t.Log(err)
+        return
+    }
+    defer file.Close()
+    res, err := account.SendMail(OptionsSendMail{Files: []UploadFileData{{Filename: "hello.txt", FileBody: file}}}, mailAcc, "Hello", "Konichiwa", "yobimefa@heisei.be")
     if err != nil {
         t.Fatal(err)
     }
