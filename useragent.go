@@ -681,7 +681,7 @@ var deviceList = []device{
     }},
 }
 
-func ua() string {
+func randUA() string {
     d := deviceList[rand.Intn(len(deviceList))]
     return fmt.Sprintf(
         "Mozilla/5.0 (Linux; Android 15; %s; Build/%s; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/%d.0.0.0 Mobile Safari/537.36 AndroidMailNowNativeVer=%s;MailNowApp=%s;",

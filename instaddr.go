@@ -35,11 +35,28 @@ type Account struct {
     Jar          *cookiejar.Jar
 }
 
-func NewAccount(client *http.Client) (*Account, error) {
-    c := client
-    if client == nil {
-        c = http.DefaultClient
+type Options struct {
+    Client          *http.Client
+    UserAgent       string
+    RandomUserAgent bool
+}
+
+func (o *Options) ua() string {
+    if o.RandomUserAgent || o.UserAgent == "" {
+        return randUA()
     }
+    return o.UserAgent
+}
+
+func (o *Options) client() *http.Client {
+    if o.Client != nil {
+        return o.Client
+    }
+    return http.DefaultClient
+}
+
+func NewAccount(o Options) (*Account, error) {
+    c := o.client()
     jar, err := cookiejar.New(nil)
     if err != nil {
         return nil, err
@@ -72,7 +89,7 @@ func NewAccount(client *http.Client) (*Account, error) {
         if err != nil {
             return nil, err
         }
-        req.Header.Set("User-Agent", ua())
+        req.Header.Set("User-Agent", o.ua())
         req.Header.Set("X-Requested-With", xRequestWith)
         res, err := c.Do(req)
         if err != nil {
@@ -106,7 +123,7 @@ func NewAccount(client *http.Client) (*Account, error) {
         if err != nil {
             return nil, err
         }
-        req.Header.Set("User-Agent", ua())
+        req.Header.Set("User-Agent", o.ua())
         req.Header.Set("X-Requested-With", xRequestWith)
         res, err := c.Do(req)
         if err != nil {
@@ -156,7 +173,7 @@ func NewAccount(client *http.Client) (*Account, error) {
             return nil, err
         }
         req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-        req.Header.Set("User-Agent", ua())
+        req.Header.Set("User-Agent", o.ua())
         req.Header.Set("X-Requested-With", xRequestWith)
         res, err := c.Do(req)
         if err != nil {
@@ -188,7 +205,7 @@ func NewAccount(client *http.Client) (*Account, error) {
         if err != nil {
             return nil, err
         }
-        req.Header.Set("User-Agent", ua())
+        req.Header.Set("User-Agent", o.ua())
         req.Header.Set("X-Requested-With", xRequestWith)
         res, err := c.Do(req)
         if err != nil {
@@ -223,11 +240,8 @@ type MailAccount struct {
     Address string
 }
 
-func (a *Account) CreateAddressWithExpiration(client *http.Client) (*MailAccount, error) {
-    c := client
-    if client == nil {
-        c = http.DefaultClient
-    }
+func (a *Account) CreateAddressWithExpiration(o Options) (*MailAccount, error) {
+    c := o.client()
     c.Jar = a.Jar
     parse, err := url.Parse(indexURL)
     if err != nil {
@@ -246,7 +260,7 @@ func (a *Account) CreateAddressWithExpiration(client *http.Client) (*MailAccount
     if err != nil {
         return nil, err
     }
-    req.Header.Set("User-Agent", ua())
+    req.Header.Set("User-Agent", o.ua())
     req.Header.Set("X-Requested-With", xRequestWith)
     res, err := c.Do(req)
     if err != nil {
@@ -270,11 +284,9 @@ func (a *Account) CreateAddressWithExpiration(client *http.Client) (*MailAccount
     return mailAcc, nil
 }
 
-func (a *Account) CreateAddressWithDomainAndName(client *http.Client, domain, name string) (*MailAccount, error) {
-    c := client
-    if client == nil {
-        c = http.DefaultClient
-    }
+//TODO: domain listを作る
+func (a *Account) CreateAddressWithDomainAndName(o Options, domain, name string) (*MailAccount, error) {
+    c := o.client()
     c.Jar = a.Jar
     var prevTime int64
     {
@@ -297,7 +309,7 @@ func (a *Account) CreateAddressWithDomainAndName(client *http.Client, domain, na
         if err != nil {
             return nil, err
         }
-        req.Header.Set("User-Agent", ua())
+        req.Header.Set("User-Agent", o.ua())
         req.Header.Set("X-Requested-With", xRequestWith)
         res, err := c.Do(req)
         if err != nil {
@@ -326,7 +338,7 @@ func (a *Account) CreateAddressWithDomainAndName(client *http.Client, domain, na
     if err != nil {
         return nil, err
     }
-    req.Header.Set("User-Agent", ua())
+    req.Header.Set("User-Agent", o.ua())
     req.Header.Set("X-Requested-With", xRequestWith)
     res, err := c.Do(req)
     if err != nil {
@@ -350,11 +362,8 @@ func (a *Account) CreateAddressWithDomainAndName(client *http.Client, domain, na
     return mailAcc, nil
 }
 
-func (a *Account) CreateAddressRandom(client *http.Client) (*MailAccount, error) {
-    c := client
-    if client == nil {
-        c = http.DefaultClient
-    }
+func (a *Account) CreateAddressRandom(o Options) (*MailAccount, error) {
+    c := o.client()
     c.Jar = a.Jar
     //Add mail and find address from response
     parse, err := url.Parse(indexURL)
@@ -374,7 +383,7 @@ func (a *Account) CreateAddressRandom(client *http.Client) (*MailAccount, error)
     if err != nil {
         return nil, err
     }
-    req.Header.Set("User-Agent", ua())
+    req.Header.Set("User-Agent", o.ua())
     req.Header.Set("X-Requested-With", xRequestWith)
     res, err := c.Do(req)
     if err != nil {
@@ -406,11 +415,8 @@ type MailPreview struct {
     ViewKey string
 }
 
-func (a *Account) SearchMail(client *http.Client, searchQuery string) ([]MailPreview, error) {
-    c := client
-    if client == nil {
-        c = http.DefaultClient
-    }
+func (a *Account) SearchMail(o Options, searchQuery string) ([]MailPreview, error) {
+    c := o.client()
     c.Jar = a.Jar
     parse, err := url.Parse(searchMailURL)
     if err != nil {
@@ -427,7 +433,7 @@ func (a *Account) SearchMail(client *http.Client, searchQuery string) ([]MailPre
     if err != nil {
         return nil, err
     }
-    req.Header.Set("User-Agent", ua())
+    req.Header.Set("User-Agent", o.ua())
     req.Header.Set("X-Requested-With", xRequestWith)
     res, err := c.Do(req)
     if err != nil {
@@ -489,11 +495,8 @@ type Mail struct {
     Attachments []Attachment
 }
 
-func (a *Account) ViewMail(client *http.Client, mailPreview MailPreview) (*Mail, error) {
-    c := client
-    if client == nil {
-        c = http.DefaultClient
-    }
+func (a *Account) ViewMail(o Options, mailPreview MailPreview) (*Mail, error) {
+    c := o.client()
     c.Jar = a.Jar
     parse, err := url.Parse(viewMailURL)
     if err != nil {
@@ -508,7 +511,7 @@ func (a *Account) ViewMail(client *http.Client, mailPreview MailPreview) (*Mail,
         return nil, err
     }
     req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-    req.Header.Set("User-Agent", ua())
+    req.Header.Set("User-Agent", o.ua())
     req.Header.Set("X-Requested-With", xRequestWith)
     res, err := c.Do(req)
     if err != nil {
@@ -555,11 +558,8 @@ func (a *Account) ViewMail(client *http.Client, mailPreview MailPreview) (*Mail,
     return mail, nil
 }
 
-func (a *Account) DownloadAttachment(client *http.Client, attachment Attachment) ([]byte, error) {
-    c := client
-    if client == nil {
-        c = http.DefaultClient
-    }
+func (a *Account) DownloadAttachment(o Options, attachment Attachment) ([]byte, error) {
+    c := o.client()
     c.Jar = a.Jar
     parse, err := url.Parse(openAttachURL)
     if err != nil {
@@ -576,7 +576,7 @@ func (a *Account) DownloadAttachment(client *http.Client, attachment Attachment)
     if err != nil {
         return nil, err
     }
-    req.Header.Set("User-Agent", ua())
+    req.Header.Set("User-Agent", o.ua())
     req.Header.Set("X-Requested-With", xRequestWith)
     res, err := c.Do(req)
     if err != nil {
@@ -588,4 +588,8 @@ func (a *Account) DownloadAttachment(client *http.Client, attachment Attachment)
         return nil, err
     }
     return b, nil
+}
+
+func (a *Account) SendMail() error {
+
 }
