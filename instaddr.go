@@ -1,0 +1,591 @@
+package instaddr
+
+import (
+    "errors"
+    "fmt"
+    "io"
+    "net/http"
+    "net/http/cookiejar"
+    "net/url"
+    "regexp"
+    "strconv"
+    "strings"
+    "time"
+
+    "github.com/antchfx/htmlquery"
+)
+
+const version = "4500"
+const (
+    baseURL       = "https://m.kuku.lu"
+    indexURL      = baseURL + "/smphone.app.index.php"
+    newAccountURL = baseURL + "/smphone.app.new.php"
+    searchMailURL = baseURL + "/smphone.app.recv._ajax.php"
+    viewMailURL   = baseURL + "/smphone.app.recv.view.php"
+    openAttachURL = baseURL + "/smphone.app.attachopener.php"
+)
+const xRequestWith = "air.kukulive.mailnow"
+
+type Account struct {
+    CSRFToken    string
+    CSRFSubToken string
+    SessionHash  string
+    UIDencSeted  string
+    MailAccounts []*MailAccount
+    Jar          *cookiejar.Jar
+}
+
+func NewAccount(client *http.Client) (*Account, error) {
+    c := client
+    if client == nil {
+        c = http.DefaultClient
+    }
+    jar, err := cookiejar.New(nil)
+    if err != nil {
+        return nil, err
+    }
+    parse, err := url.Parse(baseURL)
+    if err != nil {
+        return nil, err
+    }
+    jar.SetCookies(parse, []*http.Cookie{{
+        Name:    "cookie_timezone",
+        Value:   "UTC",
+        MaxAge:  63072000,
+        Expires: time.Now().Add(63072000 * time.Second),
+    }})
+    c.Jar = jar
+    //Get csrf_token
+    csrf := ""
+    {
+        parse, err := url.Parse(newAccountURL)
+        if err != nil {
+            return nil, err
+        }
+        q := url.Values{}
+        q.Set("UID", "")
+        q.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
+        q.Set("version", version)
+        q.Set("request_unread", "1")
+        parse.RawQuery = q.Encode()
+        req, err := http.NewRequest("GET", parse.String(), nil)
+        if err != nil {
+            return nil, err
+        }
+        req.Header.Set("User-Agent", ua())
+        req.Header.Set("X-Requested-With", xRequestWith)
+        res, err := c.Do(req)
+        if err != nil {
+            return nil, err
+        }
+        defer res.Body.Close()
+        for _, cookie := range res.Cookies() {
+            if cookie.Name == "cookie_csrf_token" {
+                csrf = cookie.Value
+            }
+        }
+    }
+    if csrf == "" {
+        return nil, errors.New("no csrf found")
+    }
+    //Find new_uid
+    uid := ""
+    newUID := ""
+    timeStr := ""
+    {
+        parse, err := url.Parse(indexURL)
+        if err != nil {
+            return nil, err
+        }
+        q := url.Values{}
+        q.Set("UID", "")
+        q.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
+        q.Set("version", version)
+        parse.RawQuery = q.Encode()
+        req, err := http.NewRequest("GET", parse.String(), nil)
+        if err != nil {
+            return nil, err
+        }
+        req.Header.Set("User-Agent", ua())
+        req.Header.Set("X-Requested-With", xRequestWith)
+        res, err := c.Do(req)
+        if err != nil {
+            return nil, err
+        }
+        defer res.Body.Close()
+        b, err := io.ReadAll(res.Body)
+        if err != nil {
+            return nil, err
+        }
+        uidRegex := regexp.MustCompile(`name="UID"\s+value="([^"]+)"`)
+        newUIDRegex := regexp.MustCompile(`name="MAIL_NOW_NEW_UID"\s+value="([^"]+)"`)
+        timeRegex := regexp.MustCompile(`name="t"\s+value="([^"]+)"`)
+        uidMatch := uidRegex.FindStringSubmatch(string(b))
+        if len(uidMatch) < 2 {
+            return nil, errors.New("no uid found")
+        }
+        uid = uidMatch[1]
+        newUIDMatch := newUIDRegex.FindStringSubmatch(string(b))
+        if len(newUIDMatch) < 2 {
+            return nil, errors.New("no new-uid found")
+        }
+        newUID = newUIDMatch[1]
+        timeMatch := timeRegex.FindStringSubmatch(string(b))
+        if len(timeMatch) < 2 {
+            return nil, errors.New("no time found")
+        }
+        timeStr = timeMatch[1]
+    }
+    if uid == "" || newUID == "" || timeStr == "" {
+        return nil, errors.New("invalid response returned")
+    }
+    //Find session_hash and ui_denc_seted
+    sessionHash := ""
+    uiDencSeted := ""
+    {
+        parse, err := url.Parse(indexURL)
+        if err != nil {
+            return nil, err
+        }
+        form := url.Values{}
+        form.Set("UID", uid)
+        form.Set("MAIL_NOW_NEW_UID", newUID)
+        form.Set("t", timeStr)
+        req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+        if err != nil {
+            return nil, err
+        }
+        req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+        req.Header.Set("User-Agent", ua())
+        req.Header.Set("X-Requested-With", xRequestWith)
+        res, err := c.Do(req)
+        if err != nil {
+            return nil, err
+        }
+        defer res.Body.Close()
+        for _, cookie := range res.Cookies() {
+            if cookie.Name == "cookie_sessionhash" {
+                sessionHash = cookie.Value
+            }
+            if cookie.Name == "cookie_uidenc_seted" {
+                uiDencSeted = cookie.Value
+            }
+        }
+    }
+    if sessionHash == "" || uiDencSeted == "" {
+        return nil, errors.New("invalid cookie returned")
+    }
+    //Find csrf_subtoken
+    csrfSub := ""
+    {
+        parse, err := url.Parse(indexURL)
+        if err != nil {
+            return nil, err
+        }
+        form := url.Values{}
+        form.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
+        req, err := http.NewRequest("GET", parse.String(), nil)
+        if err != nil {
+            return nil, err
+        }
+        req.Header.Set("User-Agent", ua())
+        req.Header.Set("X-Requested-With", xRequestWith)
+        res, err := c.Do(req)
+        if err != nil {
+            return nil, err
+        }
+        defer res.Body.Close()
+        b, err := io.ReadAll(res.Body)
+        if err != nil {
+            return nil, err
+        }
+        csrfSubRegex := regexp.MustCompile(`csrf_subtoken_check=([a-f0-9]+)`)
+        csrfSubMatch := csrfSubRegex.FindStringSubmatch(string(b))
+        if len(csrfSubMatch) < 2 {
+            return nil, errors.New("no csrf_subtoken found")
+        }
+        csrfSub = csrfSubMatch[1]
+    }
+    if csrfSub == "" {
+        return nil, errors.New("no csrf_subtoken found")
+    }
+
+    return &Account{
+        CSRFToken:    csrf,
+        CSRFSubToken: csrfSub,
+        SessionHash:  sessionHash,
+        UIDencSeted:  uiDencSeted,
+        Jar:          jar,
+    }, nil
+}
+
+type MailAccount struct {
+    Address string
+}
+
+func (a *Account) CreateAddressWithExpiration(client *http.Client) (*MailAccount, error) {
+    c := client
+    if client == nil {
+        c = http.DefaultClient
+    }
+    c.Jar = a.Jar
+    parse, err := url.Parse(indexURL)
+    if err != nil {
+        return nil, err
+    }
+    q := url.Values{}
+    q.Set("action", "addMailAddrByOnetime")
+    q.Set("nopost", "1")
+    q.Set("by_system", "1")
+    q.Set("csrf_token_check", a.CSRFToken)
+    q.Set("csrf_subtoken_check", a.CSRFSubToken)
+    q.Set("recaptcha_token", "")
+    q.Set("_", strconv.FormatInt(time.Now().Unix(), 10))
+    parse.RawQuery = q.Encode()
+    req, err := http.NewRequest("GET", parse.String(), nil)
+    if err != nil {
+        return nil, err
+    }
+    req.Header.Set("User-Agent", ua())
+    req.Header.Set("X-Requested-With", xRequestWith)
+    res, err := c.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer res.Body.Close()
+    b, err := io.ReadAll(res.Body)
+    if err != nil {
+        return nil, err
+    }
+    addrRegex := regexp.MustCompile(`([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
+    addrMatch := addrRegex.FindStringSubmatch(string(b))
+    if len(addrMatch) < 2 {
+        return nil, errors.New("failed to create address")
+    }
+
+    mailAcc := &MailAccount{
+        Address: addrMatch[1],
+    }
+    a.MailAccounts = append(a.MailAccounts, mailAcc)
+    return mailAcc, nil
+}
+
+func (a *Account) CreateAddressWithDomainAndName(client *http.Client, domain, name string) (*MailAccount, error) {
+    c := client
+    if client == nil {
+        c = http.DefaultClient
+    }
+    c.Jar = a.Jar
+    var prevTime int64
+    {
+        parse, err := url.Parse(indexURL)
+        if err != nil {
+            return nil, err
+        }
+        q := url.Values{}
+        q.Set("action", "checkNewMailUser")
+        q.Set("nopost", "1")
+        q.Set("by_system", "1")
+        q.Set("csrf_token_check", a.CSRFToken)
+        q.Set("csrf_subtoken_check", a.CSRFSubToken)
+        q.Set("newdomain", domain)
+        q.Set("newuser", name)
+        prevTime = time.Now().Unix()
+        q.Set("_", strconv.FormatInt(prevTime, 10))
+        parse.RawQuery = q.Encode()
+        req, err := http.NewRequest("GET", parse.String(), nil)
+        if err != nil {
+            return nil, err
+        }
+        req.Header.Set("User-Agent", ua())
+        req.Header.Set("X-Requested-With", xRequestWith)
+        res, err := c.Do(req)
+        if err != nil {
+            return nil, err
+        }
+        defer res.Body.Close()
+    }
+    //Add mail and find address from response
+    parse, err := url.Parse(indexURL)
+    if err != nil {
+        return nil, err
+    }
+    q := url.Values{}
+    q.Set("action", "addMailAddrByManual")
+    q.Set("nopost", "1")
+    q.Set("by_system", "1")
+    q.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
+    q.Set("csrf_token_check", a.CSRFToken)
+    q.Set("csrf_subtoken_check", a.CSRFSubToken)
+    q.Set("newdomain", domain)
+    q.Set("newuser", name)
+    q.Set("recaptcha_token", "")
+    q.Set("_", strconv.FormatInt(prevTime+1, 10))
+    parse.RawQuery = q.Encode()
+    req, err := http.NewRequest("GET", parse.String(), nil)
+    if err != nil {
+        return nil, err
+    }
+    req.Header.Set("User-Agent", ua())
+    req.Header.Set("X-Requested-With", xRequestWith)
+    res, err := c.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer res.Body.Close()
+    b, err := io.ReadAll(res.Body)
+    if err != nil {
+        return nil, err
+    }
+    addrRegex := regexp.MustCompile(`([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
+    addrMatch := addrRegex.FindStringSubmatch(string(b))
+    if len(addrMatch) < 2 {
+        return nil, errors.New("failed to create address")
+    }
+
+    mailAcc := &MailAccount{
+        Address: addrMatch[1],
+    }
+    a.MailAccounts = append(a.MailAccounts, mailAcc)
+    return mailAcc, nil
+}
+
+func (a *Account) CreateAddressRandom(client *http.Client) (*MailAccount, error) {
+    c := client
+    if client == nil {
+        c = http.DefaultClient
+    }
+    c.Jar = a.Jar
+    //Add mail and find address from response
+    parse, err := url.Parse(indexURL)
+    if err != nil {
+        return nil, err
+    }
+    q := url.Values{}
+    q.Set("action", "addMailAddrByAuto")
+    q.Set("nopost", "1")
+    q.Set("by_system", "1")
+    q.Set("csrf_token_check", a.CSRFToken)
+    q.Set("csrf_subtoken_check", a.CSRFSubToken)
+    q.Set("recaptcha_token", "")
+    q.Set("_", strconv.FormatInt(time.Now().Unix(), 10))
+    parse.RawQuery = q.Encode()
+    req, err := http.NewRequest("GET", parse.String(), nil)
+    if err != nil {
+        return nil, err
+    }
+    req.Header.Set("User-Agent", ua())
+    req.Header.Set("X-Requested-With", xRequestWith)
+    res, err := c.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer res.Body.Close()
+    b, err := io.ReadAll(res.Body)
+    if err != nil {
+        return nil, err
+    }
+    addrRegex := regexp.MustCompile(`([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
+    addrMatch := addrRegex.FindStringSubmatch(string(b))
+    if len(addrMatch) < 2 {
+        return nil, errors.New("failed to create address")
+    }
+
+    mailAcc := &MailAccount{
+        Address: addrMatch[1],
+    }
+    a.MailAccounts = append(a.MailAccounts, mailAcc)
+    return mailAcc, nil
+}
+
+type MailPreview struct {
+    MailID  string
+    Subject string
+    From    string
+    To      string
+    ViewKey string
+}
+
+func (a *Account) SearchMail(client *http.Client, searchQuery string) ([]MailPreview, error) {
+    c := client
+    if client == nil {
+        c = http.DefaultClient
+    }
+    c.Jar = a.Jar
+    parse, err := url.Parse(searchMailURL)
+    if err != nil {
+        return nil, err
+    }
+    q := url.Values{}
+    q.Set("q", searchQuery)
+    q.Set("nopost", "1")
+    q.Set("csrf_token_check", a.CSRFToken)
+    q.Set("csrf_subtoken_check", a.CSRFSubToken)
+    q.Set("_", strconv.FormatInt(time.Now().Unix(), 10))
+    parse.RawQuery = q.Encode()
+    req, err := http.NewRequest("GET", parse.String(), nil)
+    if err != nil {
+        return nil, err
+    }
+    req.Header.Set("User-Agent", ua())
+    req.Header.Set("X-Requested-With", xRequestWith)
+    res, err := c.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer res.Body.Close()
+    b, err := io.ReadAll(res.Body)
+    if err != nil {
+        return nil, err
+    }
+    doc, err := htmlquery.Parse(strings.NewReader(string(b)))
+    if err != nil {
+        return nil, err
+    }
+    mailNumRegex := regexp.MustCompile(`mailnumlist\s*=\s*"([^"]+)"`)
+    mailNumMatch := mailNumRegex.FindStringSubmatch(string(b))
+    if len(mailNumMatch) < 2 {
+        return nil, errors.New("no mail_num_list found")
+    }
+    mailNumList := strings.Split(strings.ReplaceAll(mailNumMatch[1], " ", ""), ",")
+    if len(mailNumList) == 0 {
+        return nil, errors.New("no mails found")
+    }
+    mailPreviewList := []MailPreview{}
+    for _, mailNum := range mailNumList {
+        preview := MailPreview{}
+        preview.MailID = mailNum
+        mailTitleNode := htmlquery.FindOne(doc, fmt.Sprintf("//*[@id='area_mail_title_%s']/b/span", mailNum))
+        if mailTitleNode != nil {
+            preview.Subject = htmlquery.InnerText(mailTitleNode)
+        }
+        fromNode := htmlquery.FindOne(doc, fmt.Sprintf("//*[@id='link_maildata_%s']/div[3]/div/div[1]", mailNum))
+        if fromNode != nil {
+            preview.From = htmlquery.InnerText(fromNode)
+        }
+        toNode := htmlquery.FindOne(doc, fmt.Sprintf("//*[@id='link_maildata_%s']/div[3]/div/div[2]", mailNum))
+        if toNode != nil {
+            preview.To = htmlquery.InnerText(toNode)
+        }
+        viewKeyRegex := regexp.MustCompile(fmt.Sprintf(`openMailData\('%s', '([a-f0-9]+)'`, mailNum))
+        viewKeyMatch := viewKeyRegex.FindStringSubmatch(string(b))
+        if len(viewKeyMatch) > 1 {
+            preview.ViewKey = viewKeyMatch[1]
+        }
+        mailPreviewList = append(mailPreviewList, preview)
+    }
+    return mailPreviewList, nil
+}
+
+type Attachment struct {
+    FileID  string
+    FileKey string
+    Table   string
+}
+
+type Mail struct {
+    Subject     string
+    Content     string
+    Attachments []Attachment
+}
+
+func (a *Account) ViewMail(client *http.Client, mailPreview MailPreview) (*Mail, error) {
+    c := client
+    if client == nil {
+        c = http.DefaultClient
+    }
+    c.Jar = a.Jar
+    parse, err := url.Parse(viewMailURL)
+    if err != nil {
+        return nil, err
+    }
+    form := url.Values{}
+    form.Set("num", mailPreview.MailID)
+    form.Set("key", mailPreview.ViewKey)
+    form.Set("noscroll", "1")
+    req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+    if err != nil {
+        return nil, err
+    }
+    req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+    req.Header.Set("User-Agent", ua())
+    req.Header.Set("X-Requested-With", xRequestWith)
+    res, err := c.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer res.Body.Close()
+    b, err := io.ReadAll(res.Body)
+    if err != nil {
+        return nil, err
+    }
+    doc, err := htmlquery.Parse(strings.NewReader(string(b)))
+    if err != nil {
+        return nil, err
+    }
+    mail := &Mail{Subject: mailPreview.Subject}
+    contentNode := htmlquery.FindOne(doc, "//*[@id='area-data']")
+    if contentNode != nil {
+        mail.Content = htmlquery.InnerText(contentNode)
+    }
+    attachOpenerRegex := regexp.MustCompile(`(smphone\.app\.attachopener\.php[^"]*)`)
+    attachOpenerMatches := attachOpenerRegex.FindAllStringSubmatch(string(b), -1)
+    attachments := []Attachment{}
+    for _, match := range attachOpenerMatches {
+        if len(match) < 2 {
+            continue
+        }
+        src := match[1]
+        fmt.Println("gegege: " + src)
+        if strings.Contains(src, "smphone.app.attachopener.php") {
+            fmt.Println("gregergr:  " + src)
+            attach := Attachment{}
+            parsedAttachURL, err := url.Parse("https://" + src)
+            if err != nil {
+                continue
+            }
+            queries := parsedAttachURL.Query()
+            attach.FileID = queries.Get("num")
+            attach.FileKey = queries.Get("filekey")
+            attach.Table = queries.Get("table")
+            attachments = append(attachments, attach)
+        }
+    }
+    mail.Attachments = attachments
+    return mail, nil
+}
+
+func (a *Account) DownloadAttachment(client *http.Client, attachment Attachment) ([]byte, error) {
+    c := client
+    if client == nil {
+        c = http.DefaultClient
+    }
+    c.Jar = a.Jar
+    parse, err := url.Parse(indexURL)
+    if err != nil {
+        return nil, err
+    }
+    q := url.Values{}
+    q.Set("type", "attach_recv")
+    q.Set("table", attachment.Table)
+    q.Set("num", attachment.FileID)
+    q.Set("filekey", attachment.FileKey)
+    q.Set("share_id", "")
+    parse.RawQuery = q.Encode()
+    req, err := http.NewRequest("GET", parse.String(), nil)
+    if err != nil {
+        return nil, err
+    }
+    req.Header.Set("User-Agent", ua())
+    req.Header.Set("X-Requested-With", xRequestWith)
+    res, err := c.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer res.Body.Close()
+    b, err := io.ReadAll(res.Body)
+    if err != nil {
+        return nil, err
+    }
+    return b, nil
+}
