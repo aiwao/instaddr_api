@@ -688,3 +688,13 @@ func randUA() string {
         d.name, d.build[rand.Intn(len(d.build))], rand.Intn(20)+124, version, version,
     )
 }
+
+const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+func webkitBoundary() string {
+    b := make([]byte, 16)
+    for i := range b {
+        b[i] = charset[rand.Intn(len(charset))]
+    }
+    return "----WebKitFormBoundary" + string(b)
+}

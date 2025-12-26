@@ -1,6 +1,7 @@
 package instaddr
 
 import (
+    "bytes"
     "os"
     "testing"
     "time"
@@ -168,7 +169,12 @@ func TestSendMail(t *testing.T) {
         return
     }
     defer file.Close()
-    res, err := account.SendMail(OptionsSendMail{Files: []UploadFileData{{Filename: "hello.txt", FileBody: file}}}, mailAcc, "Hello", "Konichiwa", "yobimefa@heisei.be")
+    res, err := account.SendMail(OptionsSendMail{
+        Files: []UploadFileData{
+            {Filename: "hello.txt", FileBody: file},
+            {Filename: "hello2.txt", BufferBody: bytes.NewBuffer([]byte("Hello2"))},
+        },
+    }, mailAcc, "Hello", "Konichiwa", "yobimefa@heisei.be")
     if err != nil {
         t.Fatal(err)
     }
@@ -193,5 +199,11 @@ func TestGetMailDomains(t *testing.T) {
 func TestUA(t *testing.T) {
     for i := 0; i < 10; i++ {
         t.Log(randUA())
+    }
+}
+
+func TestWebkitBoundary(t *testing.T) {
+    for i := 0; i < 10; i++ {
+        t.Log(webkitBoundary())
     }
 }

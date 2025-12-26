@@ -617,6 +617,13 @@ type OptionsSendMail struct {
     Options
 }
 
+type fileUploadInfo struct {
+    filename string
+    fileType string
+    size     int64
+    buffer   io.Reader
+}
+
 func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject, content, to string) (*SendMailResponse, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -684,7 +691,38 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
     }
 
     if len(o.Files) > 0 {
-        for _, file := range o.Files {
+        totalSize := int64(0)
+        payloadPrepare := "{"
+        var infoList []fileUploadInfo
+        for i, file := range o.Files {
+            fileSize := int64(-1)
+            var fileBody io.Reader = nil
+            if file.FileBody != nil {
+                fileBody = file.FileBody
+                stat, err := file.FileBody.Stat()
+                if err != nil {
+                    continue
+                }
+                fileSize = stat.Size()
+            } else if file.BufferBody != nil {
+                fileBody = file.BufferBody
+                fileSize = int64(file.BufferBody.Len())
+            } else if file.ReaderBody != nil {
+                fileBody = file.ReaderBody
+                fileSize = file.ReaderBody.Size()
+            }
+            if fileSize == -1 || fileBody == nil {
+                continue
+            }
+            infoList = append(infoList, fileUploadInfo{filename: file.Filename, size: fileSize, buffer: fileBody})
+            totalSize += fileSize
+            lastStr := ","
+            if len(o.Files)-1 == i {
+                lastStr = "}"
+            }
+            payloadPrepare += fmt.Sprintf(`"%d":{"filename":"%s","size":%d}%s`, i, file.Filename, fileSize, lastStr)
+        }
+        if len(infoList) > 0 {
             //Register file hash
             {
                 parse, err := url.Parse(newURL)
@@ -710,51 +748,8 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
                 }
                 res.Body.Close()
             }
-            //Open file uploader
-            {
-                parse, err := url.Parse(fileUploadURL)
-                if err != nil {
-                    return nil, err
-                }
-                form := url.Values{}
-                form.Set("file_hash", hash)
-                form.Set("autolang", "en")
-                form.Set("open_by_app", "1")
-                req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
-                if err != nil {
-                    return nil, err
-                }
-                req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                req.Header.Set("User-Agent", o.ua())
-                req.Header.Set("X-Requested-With", xRequestWith)
-                res, err := c.Do(req)
-                if err != nil {
-                    return nil, err
-                }
-                res.Body.Close()
-            }
             //Prepare upload
-            fileSize := int64(-1)
-            var fileBody io.Reader = nil
             {
-                if file.FileBody != nil {
-                    fileBody = file.FileBody
-                    stat, err := file.FileBody.Stat()
-                    if err != nil {
-                        continue
-                    }
-                    fileSize = stat.Size()
-                } else if file.BufferBody != nil {
-                    fileBody = file.BufferBody
-                    fileSize = int64(file.BufferBody.Len())
-                } else if file.ReaderBody != nil {
-                    fileBody = file.ReaderBody
-                    fileSize = file.ReaderBody.Size()
-                }
-                if fileSize == -1 || fileBody == nil {
-                    continue
-                }
-
                 parse, err := url.Parse(fileUploadURL)
                 if err != nil {
                     return nil, err
@@ -762,9 +757,9 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
                 form := url.Values{}
                 form.Set("action", "prepareUpload2")
                 form.Set("file_hash", hash)
-                form.Set("totalcount", "1")
-                form.Set("totalsize", strconv.FormatInt(fileSize, 10))
-                form.Set("upload_files", fmt.Sprintf(`{"0":{"filename":"%s","size":%d}}`, file.Filename, fileSize))
+                form.Set("totalcount", strconv.Itoa(len(infoList)))
+                form.Set("totalsize", strconv.FormatInt(totalSize, 10))
+                form.Set("upload_files", payloadPrepare)
                 req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
                 if err != nil {
                     return nil, err
@@ -779,10 +774,10 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
                 res.Body.Close()
             }
             //Upload file
-            {
+            for _, info := range infoList {
                 b := &bytes.Buffer{}
                 mw := multipart.NewWriter(b)
-                mw.SetBoundary("----WebKitFormBoundaryOPM6JgABuuyKiaeP")
+                mw.SetBoundary(webkitBoundary())
                 mw.WriteField("action", "uploadFile2")
                 mw.WriteField("service", "MailNow")
                 mw.WriteField("ajax", "1")
@@ -790,15 +785,15 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
                 mw.WriteField("file_hash", hash)
                 mw.WriteField("filecnt", "1")
                 mw.WriteField("uuid", uuid)
-                mw.WriteField("file_1_name", file.Filename)
-                mw.WriteField("file_1_size", strconv.FormatInt(fileSize, 10))
+                mw.WriteField("file_1_name", info.filename)
+                mw.WriteField("file_1_size", strconv.FormatInt(info.size, 10))
 
                 fileType := "text/plain"
-                if file.FileType != "" {
-                    fileType = file.FileType
+                if info.fileType != "" {
+                    fileType = info.fileType
                 } else {
                     ext := ""
-                    split := strings.Split(file.Filename, ".")
+                    split := strings.Split(info.filename, ".")
                     if len(split) > 0 {
                         ext = split[len(split)-1]
                     }
@@ -812,10 +807,10 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
                 mw.WriteField("file_1_type", fileType)
 
                 h := make(textproto.MIMEHeader)
-                h.Set("Content-Disposition", `form-data; name="file_1"; filename="`+file.Filename+`"`)
+                h.Set("Content-Disposition", `form-data; name="file_1"; filename="`+info.filename+`"`)
                 h.Set("Content-Type", fileType)
                 part, _ := mw.CreatePart(h)
-                io.Copy(part, fileBody)
+                io.Copy(part, info.buffer)
 
                 mw.Close()
 
@@ -838,7 +833,6 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject,
             }
         }
     }
-
     //Send
     var sendMailRes SendMailResponse
     {
