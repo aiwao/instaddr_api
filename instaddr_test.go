@@ -156,7 +156,7 @@ func TestSearchMail(t *testing.T) {
     }
     t.Log(mailAcc.Address)
     time.Sleep(60 * time.Second)
-    previews, err := account.SearchMail(Options{}, mailAcc.Address)
+    previews, err := account.SearchMail(SearchOptions{Query: mailAcc.Address})
     if err != nil {
         t.Fatal(err)
     }
@@ -179,7 +179,7 @@ func TestViewMail(t *testing.T) {
     }
     t.Log(mailAcc.Address)
     time.Sleep(60 * time.Second)
-    previews, err := account.SearchMail(Options{}, mailAcc.Address)
+    previews, err := account.SearchMail(SearchOptions{Query: mailAcc.Address})
     if err != nil {
         t.Fatal(err)
     }
@@ -210,7 +210,7 @@ func TestDownloadAttachment(t *testing.T) {
     }
     t.Log(mailAcc.Address)
     time.Sleep(60 * time.Second)
-    previews, err := account.SearchMail(Options{}, mailAcc.Address)
+    previews, err := account.SearchMail(SearchOptions{Query: mailAcc.Address})
     if err != nil {
         t.Fatal(err)
     }

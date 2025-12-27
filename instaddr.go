@@ -596,7 +596,12 @@ type MailPreview struct {
     ViewKey string
 }
 
-func (a *Account) SearchMail(o Options, searchQuery string) ([]MailPreview, error) {
+type SearchOptions struct {
+    Query string
+    Options
+}
+
+func (a *Account) SearchMail(o SearchOptions) ([]MailPreview, error) {
     c := o.client()
     c.Jar = a.Jar
     parse, err := url.Parse(searchMailURL)
@@ -604,7 +609,7 @@ func (a *Account) SearchMail(o Options, searchQuery string) ([]MailPreview, erro
         return nil, err
     }
     q := url.Values{}
-    q.Set("q", searchQuery)
+    q.Set("q", o.Query)
     q.Set("nopost", "1")
     q.Set("csrf_token_check", a.CSRFToken)
     q.Set("csrf_subtoken_check", a.CSRFSubToken)
@@ -629,16 +634,16 @@ func (a *Account) SearchMail(o Options, searchQuery string) ([]MailPreview, erro
     if err != nil {
         return nil, err
     }
+    mailPreviewList := []MailPreview{}
     mailNumRegex := regexp.MustCompile(`mailnumlist\s*=\s*"([^"]+)"`)
     mailNumMatch := mailNumRegex.FindStringSubmatch(string(b))
     if len(mailNumMatch) < 2 {
-        return nil, errors.New("no mail_num_list found")
+        return mailPreviewList, nil
     }
     mailNumList := strings.Split(strings.ReplaceAll(mailNumMatch[1], " ", ""), ",")
     if len(mailNumList) == 0 {
-        return nil, errors.New("no mails found")
+        return mailPreviewList, nil
     }
-    mailPreviewList := []MailPreview{}
     for _, mailNum := range mailNumList {
         preview := MailPreview{}
         preview.MailID = mailNum
