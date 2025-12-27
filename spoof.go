@@ -2,7 +2,7 @@ package instaddr
 
 import (
     "fmt"
-    "math/rand"
+    "math/rand/v2"
 )
 
 type device struct {
@@ -194,7 +194,6 @@ var deviceList = []device{
             {version: "13", build: "TP1A.221005.002.B2"},
         },
     },
-    {},
     {
         name: "Pixel 5",
         build: []versionBuild{
@@ -634,11 +633,11 @@ var deviceList = []device{
 }
 
 func randUA() string {
-    deviceInfo := deviceList[rand.Intn(len(deviceList))]
-    buildInfo := deviceInfo.build[rand.Intn(len(deviceInfo.build))]
+    deviceInfo := deviceList[rand.IntN(len(deviceList))]
+    buildInfo := deviceInfo.build[rand.IntN(len(deviceInfo.build))]
     return fmt.Sprintf(
         "Mozilla/5.0 (Linux; Android %s; %s; Build/%s; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/%d.0.0.0 Mobile Safari/537.36 AndroidMailNowNativeVer=%s;MailNowApp=%s;",
-        deviceInfo.name, buildInfo.version, buildInfo.build, rand.Intn(20)+124, version, version,
+        deviceInfo.name, buildInfo.version, buildInfo.build, rand.IntN(20)+124, version, version,
     )
 }
 
@@ -647,7 +646,7 @@ const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 func webkitBoundary() string {
     b := make([]byte, 16)
     for i := range b {
-        b[i] = charset[rand.Intn(len(charset))]
+        b[i] = charset[rand.IntN(len(charset))]
     }
     return "----WebKitFormBoundary" + string(b)
 }

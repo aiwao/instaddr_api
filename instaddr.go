@@ -6,6 +6,7 @@ import (
     "errors"
     "fmt"
     "io"
+    "math/rand/v2"
     "mime"
     "mime/multipart"
     "net/http"
@@ -30,16 +31,17 @@ const (
     viewMailURL   = baseURL + "/smphone.app.recv.view.php"
     openAttachURL = baseURL + "/smphone.app.attachopener.php"
     fileUploadURL = baseURL + "/smphone.app.new._upload.php"
+    addrListURL   = baseURL + "/smphone.app.index._addrlist.php"
 )
 const xRequestWith = "air.kukulive.mailnow"
 
 type Account struct {
-    CSRFToken    string
-    CSRFSubToken string
-    SessionHash  string
-    UIDencSeted  string
-    MailAccounts []*MailAccount
-    Jar          *cookiejar.Jar
+    CSRFToken       string
+    CSRFSubToken    string
+    SessionHash     string
+    UIDencSeted     string
+    MailAccountList []MailAccount
+    Jar             *cookiejar.Jar
 }
 
 type Options struct {
@@ -235,33 +237,159 @@ func NewAccount(o Options) (*Account, error) {
     }
 
     return &Account{
-        CSRFToken:    csrf,
-        CSRFSubToken: csrfSub,
-        SessionHash:  sessionHash,
-        UIDencSeted:  uiDencSeted,
-        Jar:          jar,
+        CSRFToken:       csrf,
+        CSRFSubToken:    csrfSub,
+        SessionHash:     sessionHash,
+        UIDencSeted:     uiDencSeted,
+        MailAccountList: []MailAccount{},
+        Jar:             jar,
     }, nil
+}
+
+type AuthInfo struct {
+    AccountID string
+    Password  string
+}
+
+func LoginAccount(o Options, authInfo AuthInfo) (*Account, error) {
+    acc, err := NewAccount(o)
+    if err != nil {
+        return nil, err
+    }
+    c := o.client()
+    c.Jar = acc.Jar
+
+    parse, err := url.Parse(indexURL)
+    if err != nil {
+        return nil, err
+    }
+    form := url.Values{}
+    form.Set("action", "checkLogin")
+    form.Set("confirmcode", "")
+    form.Set("nopost", "1")
+    form.Set("csrf_token_check", acc.CSRFToken)
+    form.Set("csrf_subtoken_check", acc.CSRFSubToken)
+    form.Set("number", authInfo.AccountID)
+    form.Set("password", authInfo.Password)
+    form.Set("syncconfirm", "")
+    {
+        req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+        if err != nil {
+            return nil, err
+        }
+        req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        req.Header.Set("User-Agent", o.ua())
+        req.Header.Set("X-Requested-With", xRequestWith)
+        res, err := c.Do(req)
+        if err != nil {
+            return nil, err
+        }
+        defer res.Body.Close()
+    }
+    {
+        form.Set("syncconfirm", "yes")
+        req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+        if err != nil {
+            return nil, err
+        }
+        req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        req.Header.Set("User-Agent", o.ua())
+        req.Header.Set("X-Requested-With", xRequestWith)
+        res, err := c.Do(req)
+        if err != nil {
+            return nil, err
+        }
+        defer res.Body.Close()
+        b, err := io.ReadAll(res.Body)
+        if err != nil {
+            return nil, err
+        }
+        if !strings.Contains(strings.ToLower(string(b)), "shash") {
+            return nil, errors.New("failed to login")
+        }
+        shash := strings.ReplaceAll(string(b), "OK:", "")
+        acc.SessionHash = shash
+        parseBase, err := url.Parse(baseURL)
+        if err != nil {
+            return nil, err
+        }
+        cookies := []*http.Cookie{}
+        for _, cookie := range acc.Jar.Cookies(parseBase) {
+            if cookie.Name == "cookie_sessionhash" {
+                cookie.Value = url.QueryEscape(shash)
+            }
+            cookies = append(cookies, cookie)
+        }
+        acc.Jar.SetCookies(parseBase, cookies)
+    }
+    return acc, nil
+}
+
+func (a *Account) GetAuthInfo(o Options) (AuthInfo, error) {
+    c := o.client()
+    c.Jar = a.Jar
+    parse, err := url.Parse(indexURL)
+    info := AuthInfo{}
+    if err != nil {
+        return info, err
+    }
+    q := url.Values{}
+    q.Set("passcodelock", "off")
+    q.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
+    q.Set("pagemode_login", "1")
+    q.Set("noindex", "1")
+    q.Set("version", version)
+    parse.RawQuery = q.Encode()
+    req, err := http.NewRequest("GET", parse.String(), nil)
+    if err != nil {
+        return info, err
+    }
+    req.Header.Set("User-Agent", o.ua())
+    req.Header.Set("X-Requested-With", xRequestWith)
+    res, err := c.Do(req)
+    if err != nil {
+        return info, err
+    }
+    defer res.Body.Close()
+    b, err := io.ReadAll(res.Body)
+    if err != nil {
+        return info, err
+    }
+    doc, err := htmlquery.Parse(strings.NewReader(string(b)))
+    if err != nil {
+        return info, err
+    }
+    accountIDNode := htmlquery.FindOne(doc, `//*[@id="area_numberview"]`)
+    if accountIDNode == nil {
+        return info, errors.New("failed to get accountID")
+    }
+    info.AccountID = htmlquery.InnerText(accountIDNode)
+
+    passwordNode := htmlquery.FindOne(doc, `//*[@id="area_passwordview_copy"]`)
+    if passwordNode == nil {
+        return info, errors.New("failed to get password")
+    }
+    info.Password = htmlquery.InnerText(passwordNode)
+    return info, nil
 }
 
 type MailAccount struct {
     Address string
 }
 
-func (a *Account) CreateAddressWithExpiration(o Options) (*MailAccount, error) {
+func (a *Account) UpdateMailAccountList(o Options) ([]MailAccount, error) {
     c := o.client()
     c.Jar = a.Jar
-    parse, err := url.Parse(indexURL)
+    parse, err := url.Parse(addrListURL)
+    list := []MailAccount{}
     if err != nil {
         return nil, err
     }
     q := url.Values{}
-    q.Set("action", "addMailAddrByOnetime")
+    currentTime := time.Now().Unix()
+    q.Set("t", strconv.FormatInt(currentTime, 10))
     q.Set("nopost", "1")
-    q.Set("by_system", "1")
-    q.Set("csrf_token_check", a.CSRFToken)
-    q.Set("csrf_subtoken_check", a.CSRFSubToken)
-    q.Set("recaptcha_token", "")
-    q.Set("_", strconv.FormatInt(time.Now().Unix(), 10))
+    q.Set("_", strconv.FormatInt(currentTime-rand.Int64N(1000), 10))
     parse.RawQuery = q.Encode()
     req, err := http.NewRequest("GET", parse.String(), nil)
     if err != nil {
@@ -278,16 +406,58 @@ func (a *Account) CreateAddressWithExpiration(o Options) (*MailAccount, error) {
     if err != nil {
         return nil, err
     }
+    emailRegex := regexp.MustCompile(`openMailAddrData\(\s*"([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})"\s*\)`)
+    emailMatches := emailRegex.FindAllStringSubmatch(string(b), -1)
+    for _, m := range emailMatches {
+        if len(m) > 1 {
+            list = append(list, MailAccount{Address: m[1]})
+        }
+    }
+    a.MailAccountList = list
+    return list, nil
+}
+
+func (a *Account) CreateAddressWithExpiration(o Options) (MailAccount, error) {
+    c := o.client()
+    c.Jar = a.Jar
+    parse, err := url.Parse(indexURL)
+    if err != nil {
+        return MailAccount{}, err
+    }
+    q := url.Values{}
+    q.Set("action", "addMailAddrByOnetime")
+    q.Set("nopost", "1")
+    q.Set("by_system", "1")
+    q.Set("csrf_token_check", a.CSRFToken)
+    q.Set("csrf_subtoken_check", a.CSRFSubToken)
+    q.Set("recaptcha_token", "")
+    q.Set("_", strconv.FormatInt(time.Now().Unix(), 10))
+    parse.RawQuery = q.Encode()
+    req, err := http.NewRequest("GET", parse.String(), nil)
+    if err != nil {
+        return MailAccount{}, err
+    }
+    req.Header.Set("User-Agent", o.ua())
+    req.Header.Set("X-Requested-With", xRequestWith)
+    res, err := c.Do(req)
+    if err != nil {
+        return MailAccount{}, err
+    }
+    defer res.Body.Close()
+    b, err := io.ReadAll(res.Body)
+    if err != nil {
+        return MailAccount{}, err
+    }
     addrRegex := regexp.MustCompile(`([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
     addrMatch := addrRegex.FindStringSubmatch(string(b))
     if len(addrMatch) < 2 {
-        return nil, errors.New("failed to create address")
+        return MailAccount{}, errors.New("failed to create address")
     }
 
-    mailAcc := &MailAccount{
+    mailAcc := MailAccount{
         Address: addrMatch[1],
     }
-    a.MailAccounts = append(a.MailAccounts, mailAcc)
+    a.MailAccountList = append(a.MailAccountList, mailAcc)
     return mailAcc, nil
 }
 
@@ -296,14 +466,14 @@ type OptionsWithName struct {
     Options
 }
 
-func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain string) (*MailAccount, error) {
+func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain string) (MailAccount, error) {
     c := o.client()
     c.Jar = a.Jar
     var prevTime int64
     {
         parse, err := url.Parse(indexURL)
         if err != nil {
-            return nil, err
+            return MailAccount{}, err
         }
         q := url.Values{}
         q.Set("action", "checkNewMailUser")
@@ -318,20 +488,20 @@ func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain strin
         parse.RawQuery = q.Encode()
         req, err := http.NewRequest("GET", parse.String(), nil)
         if err != nil {
-            return nil, err
+            return MailAccount{}, err
         }
         req.Header.Set("User-Agent", o.ua())
         req.Header.Set("X-Requested-With", xRequestWith)
         res, err := c.Do(req)
         if err != nil {
-            return nil, err
+            return MailAccount{}, err
         }
         defer res.Body.Close()
     }
     //Add mail and find address from response
     parse, err := url.Parse(indexURL)
     if err != nil {
-        return nil, err
+        return MailAccount{}, err
     }
     q := url.Values{}
     q.Set("action", "addMailAddrByManual")
@@ -347,39 +517,39 @@ func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain strin
     parse.RawQuery = q.Encode()
     req, err := http.NewRequest("GET", parse.String(), nil)
     if err != nil {
-        return nil, err
+        return MailAccount{}, err
     }
     req.Header.Set("User-Agent", o.ua())
     req.Header.Set("X-Requested-With", xRequestWith)
     res, err := c.Do(req)
     if err != nil {
-        return nil, err
+        return MailAccount{}, err
     }
     defer res.Body.Close()
     b, err := io.ReadAll(res.Body)
     if err != nil {
-        return nil, err
+        return MailAccount{}, err
     }
     addrRegex := regexp.MustCompile(`([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
     addrMatch := addrRegex.FindStringSubmatch(string(b))
     if len(addrMatch) < 2 {
-        return nil, errors.New("failed to create address")
+        return MailAccount{}, errors.New("failed to create address")
     }
 
-    mailAcc := &MailAccount{
+    mailAcc := MailAccount{
         Address: addrMatch[1],
     }
-    a.MailAccounts = append(a.MailAccounts, mailAcc)
+    a.MailAccountList = append(a.MailAccountList, mailAcc)
     return mailAcc, nil
 }
 
-func (a *Account) CreateAddressRandom(o Options) (*MailAccount, error) {
+func (a *Account) CreateAddressRandom(o Options) (MailAccount, error) {
     c := o.client()
     c.Jar = a.Jar
     //Add mail and find address from response
     parse, err := url.Parse(indexURL)
     if err != nil {
-        return nil, err
+        return MailAccount{}, err
     }
     q := url.Values{}
     q.Set("action", "addMailAddrByAuto")
@@ -392,29 +562,29 @@ func (a *Account) CreateAddressRandom(o Options) (*MailAccount, error) {
     parse.RawQuery = q.Encode()
     req, err := http.NewRequest("GET", parse.String(), nil)
     if err != nil {
-        return nil, err
+        return MailAccount{}, err
     }
     req.Header.Set("User-Agent", o.ua())
     req.Header.Set("X-Requested-With", xRequestWith)
     res, err := c.Do(req)
     if err != nil {
-        return nil, err
+        return MailAccount{}, err
     }
     defer res.Body.Close()
     b, err := io.ReadAll(res.Body)
     if err != nil {
-        return nil, err
+        return MailAccount{}, err
     }
     addrRegex := regexp.MustCompile(`([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
     addrMatch := addrRegex.FindStringSubmatch(string(b))
     if len(addrMatch) < 2 {
-        return nil, errors.New("failed to create address")
+        return MailAccount{}, errors.New("failed to create address")
     }
 
-    mailAcc := &MailAccount{
+    mailAcc := MailAccount{
         Address: addrMatch[1],
     }
-    a.MailAccounts = append(a.MailAccounts, mailAcc)
+    a.MailAccountList = append(a.MailAccountList, mailAcc)
     return mailAcc, nil
 }
 
@@ -550,7 +720,7 @@ func (a *Account) ViewMail(o Options, mailPreview MailPreview) (*Mail, error) {
             continue
         }
         src := match[1]
-        if strings.Contains(src, "smphone.app.attachopener.php") {
+        if strings.Contains(strings.ToLower(src), "smphone.app.attachopener.php") {
             attach := Attachment{}
             parsedAttachURL, err := url.Parse("https://" + src)
             if err != nil {
@@ -624,7 +794,7 @@ type fileUploadInfo struct {
     buffer   io.Reader
 }
 
-func (a *Account) SendMail(o OptionsSendMail, mailAccount *MailAccount, subject, content, to string) (*SendMailResponse, error) {
+func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, content, to string) (*SendMailResponse, error) {
     c := o.client()
     c.Jar = a.Jar
 

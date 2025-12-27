@@ -2,7 +2,9 @@ package instaddr
 
 import (
     "bytes"
+    "math/rand/v2"
     "os"
+    "strconv"
     "testing"
     "time"
 )
@@ -16,6 +18,86 @@ func TestNewAccount(t *testing.T) {
     t.Log(account.CSRFSubToken)
     t.Log(account.SessionHash)
     t.Log(account.UIDencSeted)
+}
+
+func TestGetAuthInfo(t *testing.T) {
+    account, err := NewAccount(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    info, err := account.GetAuthInfo(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Logf("Info: [ID:%s, Password:%s]", info.AccountID, info.Password)
+}
+
+func TestGetValidMailAccountList(t *testing.T) {
+    account, err := NewAccount(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    domains, err := account.GetMailDomains(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    d := "mail4.uk"
+    if len(domains) > 0 {
+        d = domains[rand.IntN(len(domains))]
+    }
+    addr, err := account.CreateAddressWithDomainAndName(OptionsWithName{Name: "Test" + strconv.Itoa(rand.IntN(1000000))}, d)
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Log("Account created: " + addr.Address)
+    list, err := account.UpdateMailAccountList(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Log("Accounts: ")
+    for _, mailAcc := range list {
+        t.Log(mailAcc.Address)
+    }
+}
+
+func TestLoginAccount(t *testing.T) {
+    acc1, err := NewAccount(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Log("Account created: " + acc1.CSRFToken)
+    addr, err := acc1.CreateAddressRandom(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Log("Address created: " + addr.Address)
+    info, err := acc1.GetAuthInfo(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Logf("Info: [ID:%s, Password:%s]", info.AccountID, info.Password)
+    list, err := acc1.UpdateMailAccountList(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Log("Account's mail accounts: ")
+    for _, mailAcc := range list {
+        t.Log(mailAcc.Address)
+    }
+
+    acc2, err := LoginAccount(Options{}, info)
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Log("Logged in to account: " + acc2.CSRFToken)
+    list2, err := acc2.UpdateMailAccountList(Options{})
+    if err != nil {
+        t.Fatal(err)
+    }
+    t.Log("Logged in account's mail accounts")
+    for _, mailAcc := range list2 {
+        t.Log(mailAcc.Address)
+    }
 }
 
 func TestCreateAddressWithExpiration(t *testing.T) {
