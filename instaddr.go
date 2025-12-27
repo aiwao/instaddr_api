@@ -452,6 +452,7 @@ func (a *Account) CreateAddressWithExpiration(o Options) (MailAccount, error) {
 }
 
 // OptionsWithName If you don't set the Name, the Name will be random
+// Max Name length is 39
 type OptionsWithName struct {
     Name string
     Options
