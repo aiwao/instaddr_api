@@ -32,7 +32,7 @@ func TestGetAuthInfo(t *testing.T) {
     t.Logf("Info: [ID:%s, Password:%s]", info.AccountID, info.Password)
 }
 
-func TestGetValidMailAccountList(t *testing.T) {
+func TestUpdateMailAccountList(t *testing.T) {
     account, err := NewAccount(Options{})
     if err != nil {
         t.Fatal(err)
