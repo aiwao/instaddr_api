@@ -64,6 +64,7 @@ func (o *Options) client() *http.Client {
     return http.DefaultClient
 }
 
+// NewAccount Create new Account
 func NewAccount(o Options) (*Account, error) {
     c := o.client()
     jar, err := cookiejar.New(nil)
@@ -251,6 +252,7 @@ type AuthInfo struct {
     Password  string
 }
 
+// LoginAccount Login to Account with AuthInfo
 func LoginAccount(o Options, authInfo AuthInfo) (*Account, error) {
     acc, err := NewAccount(o)
     if err != nil {
@@ -271,23 +273,8 @@ func LoginAccount(o Options, authInfo AuthInfo) (*Account, error) {
     form.Set("csrf_subtoken_check", acc.CSRFSubToken)
     form.Set("number", authInfo.AccountID)
     form.Set("password", authInfo.Password)
-    form.Set("syncconfirm", "")
+    form.Set("syncconfirm", "yes")
     {
-        req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
-        if err != nil {
-            return nil, err
-        }
-        req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-        req.Header.Set("User-Agent", o.ua())
-        req.Header.Set("X-Requested-With", xRequestWith)
-        res, err := c.Do(req)
-        if err != nil {
-            return nil, err
-        }
-        defer res.Body.Close()
-    }
-    {
-        form.Set("syncconfirm", "yes")
         req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
         if err != nil {
             return nil, err
@@ -325,6 +312,7 @@ func LoginAccount(o Options, authInfo AuthInfo) (*Account, error) {
     return acc, nil
 }
 
+// GetAuthInfo Get Account's ID and Password
 func (a *Account) GetAuthInfo(o Options) (AuthInfo, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -377,6 +365,7 @@ type MailAccount struct {
     Address string
 }
 
+// UpdateMailAccountList Get all MailAccount List from Account
 func (a *Account) UpdateMailAccountList(o Options) ([]MailAccount, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -417,6 +406,7 @@ func (a *Account) UpdateMailAccountList(o Options) ([]MailAccount, error) {
     return list, nil
 }
 
+// CreateAddressWithExpiration Create MailAccount with expiration
 func (a *Account) CreateAddressWithExpiration(o Options) (MailAccount, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -461,11 +451,13 @@ func (a *Account) CreateAddressWithExpiration(o Options) (MailAccount, error) {
     return mailAcc, nil
 }
 
+// OptionsWithName If you don't set the Name, the Name will be random
 type OptionsWithName struct {
     Name string
     Options
 }
 
+// CreateAddressWithDomainAndName Create MailAccount with domain and name. name is optional
 func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain string) (MailAccount, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -543,6 +535,7 @@ func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain strin
     return mailAcc, nil
 }
 
+// CreateAddressRandom Create MailAccount by random
 func (a *Account) CreateAddressRandom(o Options) (MailAccount, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -596,11 +589,13 @@ type MailPreview struct {
     ViewKey string
 }
 
+// SearchOptions Query is optional. if you don't set the Query, API will be responds all mails
 type SearchOptions struct {
     Query string
     Options
 }
 
+// SearchMail Search mails and returns MailPreview. if you wanna get content, call ViewMail with MailPreview
 func (a *Account) SearchMail(o SearchOptions) ([]MailPreview, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -681,6 +676,7 @@ type Mail struct {
     Attachments []Attachment
 }
 
+// ViewMail View Mail
 func (a *Account) ViewMail(o Options, mailPreview MailPreview) (*Mail, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -742,6 +738,7 @@ func (a *Account) ViewMail(o Options, mailPreview MailPreview) (*Mail, error) {
     return mail, nil
 }
 
+// DownloadAttachment Download Attachment
 func (a *Account) DownloadAttachment(o Options, attachment Attachment) ([]byte, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -799,6 +796,7 @@ type fileUploadInfo struct {
     buffer   io.Reader
 }
 
+// SendMail Send mail
 func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, content, to string) (*SendMailResponse, error) {
     c := o.client()
     c.Jar = a.Jar
@@ -1052,6 +1050,7 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, 
     return &sendMailRes, nil
 }
 
+// GetMailDomains Get available domains in CreateAddressWithDomainAndName
 func (a *Account) GetMailDomains(o Options) ([]string, error) {
     domains := []string{}
     c := o.client()

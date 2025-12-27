@@ -64,7 +64,8 @@ addr, err := acc.CreateAddressRandom(instaddr.Options{})
 ```go
 acc, err := ...
 addr, err := ...
-previews, err := acc.SearchMail(instaddr.Options{}, addr.Address)
+//Query is optional. if you don't set the Query, API will be responds all mails
+previews, err := acc.SearchMail(instaddr.SearchOptions{Query: addr.Address})
 ```
 ## View mail content
 ```go
