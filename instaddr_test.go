@@ -2,15 +2,67 @@ package instaddr
 
 import (
     "bytes"
+    "context"
+    "io"
     "math/rand/v2"
+    "net/http"
+    "net/http/cookiejar"
     "os"
     "strconv"
+    "strings"
     "testing"
     "time"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+    return f(req)
+}
+
+type contextKey string
+
+func TestClientContext(t *testing.T) {
+    jar, err := cookiejar.New(nil)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    key := contextKey("request-id")
+    ctx := context.WithValue(context.Background(), key, "ctx-value")
+    sawContext := false
+    client := &http.Client{
+        Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+            if got := req.Context().Value(key); got != "ctx-value" {
+                t.Fatalf("request context value = %v, want ctx-value", got)
+            }
+            sawContext = true
+            body := `<div id="area_numberview">account-id</div><div id="area_passwordview_copy">password</div>`
+            return &http.Response{
+                StatusCode: http.StatusOK,
+                Header:     make(http.Header),
+                Body:       io.NopCloser(strings.NewReader(body)),
+                Request:    req,
+            }, nil
+        }),
+    }
+    apiClient := NewClient(ClientOptions{HTTPClient: client})
+    account := &Account{Jar: jar, client: apiClient}
+
+    info, err := account.GetAuthInfo(ctx)
+    if err != nil {
+        t.Fatal(err)
+    }
+    if !sawContext {
+        t.Fatal("transport was not called")
+    }
+    if info.AccountID != "account-id" || info.Password != "password" {
+        t.Fatalf("auth info = %#v", info)
+    }
+}
+
 func TestNewAccount(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -21,11 +73,11 @@ func TestNewAccount(t *testing.T) {
 }
 
 func TestGetAuthInfo(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    info, err := account.GetAuthInfo(Options{})
+    info, err := account.GetAuthInfo(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -33,11 +85,11 @@ func TestGetAuthInfo(t *testing.T) {
 }
 
 func TestUpdateMailAccountList(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    domains, err := account.GetMailDomains(Options{})
+    domains, err := account.GetMailDomains(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -45,12 +97,12 @@ func TestUpdateMailAccountList(t *testing.T) {
     if len(domains) > 0 {
         d = domains[rand.IntN(len(domains))]
     }
-    addr, err := account.CreateAddressWithDomainAndName(OptionsWithName{Name: "Test" + strconv.Itoa(rand.IntN(1000000))}, d)
+    addr, err := account.CreateAddressWithDomainAndName(context.Background(), d, "Test"+strconv.Itoa(rand.IntN(1000000)))
     if err != nil {
         t.Fatal(err)
     }
     t.Log("Account created: " + addr.Address)
-    list, err := account.UpdateMailAccountList(Options{})
+    list, err := account.UpdateMailAccountList(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -61,22 +113,22 @@ func TestUpdateMailAccountList(t *testing.T) {
 }
 
 func TestLoginAccount(t *testing.T) {
-    acc1, err := NewAccount(Options{})
+    acc1, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
     t.Log("Account created: " + acc1.CSRFToken)
-    addr, err := acc1.CreateAddressRandom(Options{})
+    addr, err := acc1.CreateAddressRandom(context.Background())
     if err != nil {
         t.Fatal(err)
     }
     t.Log("Address created: " + addr.Address)
-    info, err := acc1.GetAuthInfo(Options{})
+    info, err := acc1.GetAuthInfo(context.Background())
     if err != nil {
         t.Fatal(err)
     }
     t.Logf("Info: [ID:%s, Password:%s]", info.AccountID, info.Password)
-    list, err := acc1.UpdateMailAccountList(Options{})
+    list, err := acc1.UpdateMailAccountList(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -85,12 +137,12 @@ func TestLoginAccount(t *testing.T) {
         t.Log(mailAcc.Address)
     }
 
-    acc2, err := LoginAccount(Options{}, info)
+    acc2, err := LoginAccount(context.Background(), info)
     if err != nil {
         t.Fatal(err)
     }
     t.Log("Logged in to account: " + acc2.CSRFToken)
-    list2, err := acc2.UpdateMailAccountList(Options{})
+    list2, err := acc2.UpdateMailAccountList(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -101,11 +153,11 @@ func TestLoginAccount(t *testing.T) {
 }
 
 func TestCreateAddressWithExpiration(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressWithExpiration(Options{})
+    mailAcc, err := account.CreateAddressWithExpiration(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -113,11 +165,11 @@ func TestCreateAddressWithExpiration(t *testing.T) {
 }
 
 func TestCreateAddressWithDomainAndName(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    domains, err := account.GetMailDomains(Options{})
+    domains, err := account.GetMailDomains(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -126,7 +178,7 @@ func TestCreateAddressWithDomainAndName(t *testing.T) {
         domain = domains[0]
     }
     t.Log(domain)
-    mailAcc, err := account.CreateAddressWithDomainAndName(OptionsWithName{}, domain)
+    mailAcc, err := account.CreateAddressWithDomainAndName(context.Background(), domain, "")
     if err != nil {
         t.Fatal(err)
     }
@@ -134,11 +186,11 @@ func TestCreateAddressWithDomainAndName(t *testing.T) {
 }
 
 func TestCreateAddressRandom(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressRandom(Options{})
+    mailAcc, err := account.CreateAddressRandom(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -146,17 +198,17 @@ func TestCreateAddressRandom(t *testing.T) {
 }
 
 func TestSearchMail(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressRandom(Options{})
+    mailAcc, err := account.CreateAddressRandom(context.Background())
     if err != nil {
         t.Fatal(err)
     }
     t.Log(mailAcc.Address)
     time.Sleep(60 * time.Second)
-    previews, err := account.SearchMail(SearchOptions{Query: mailAcc.Address})
+    previews, err := account.SearchMail(context.Background(), mailAcc.Address)
     if err != nil {
         t.Fatal(err)
     }
@@ -169,23 +221,23 @@ func TestSearchMail(t *testing.T) {
 }
 
 func TestViewMail(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressRandom(Options{})
+    mailAcc, err := account.CreateAddressRandom(context.Background())
     if err != nil {
         t.Fatal(err)
     }
     t.Log(mailAcc.Address)
     time.Sleep(60 * time.Second)
-    previews, err := account.SearchMail(SearchOptions{Query: mailAcc.Address})
+    previews, err := account.SearchMail(context.Background(), mailAcc.Address)
     if err != nil {
         t.Fatal(err)
     }
     t.Log(len(previews))
     for _, preview := range previews {
-        mail, err := account.ViewMail(Options{}, preview)
+        mail, err := account.ViewMail(context.Background(), preview)
         if err != nil {
             t.Fatal(err)
         }
@@ -200,23 +252,23 @@ func TestViewMail(t *testing.T) {
 }
 
 func TestDownloadAttachment(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressRandom(Options{})
+    mailAcc, err := account.CreateAddressRandom(context.Background())
     if err != nil {
         t.Fatal(err)
     }
     t.Log(mailAcc.Address)
     time.Sleep(60 * time.Second)
-    previews, err := account.SearchMail(SearchOptions{Query: mailAcc.Address})
+    previews, err := account.SearchMail(context.Background(), mailAcc.Address)
     if err != nil {
         t.Fatal(err)
     }
     t.Log(len(previews))
     for _, preview := range previews {
-        mail, err := account.ViewMail(Options{}, preview)
+        mail, err := account.ViewMail(context.Background(), preview)
         if err != nil {
             t.Fatal(err)
         }
@@ -226,7 +278,7 @@ func TestDownloadAttachment(t *testing.T) {
             t.Log(attachment.FileID)
             t.Log(attachment.FileKey)
             t.Log(attachment.Table)
-            b, err := account.DownloadAttachment(Options{}, attachment)
+            b, err := account.DownloadAttachment(context.Background(), attachment)
             if err != nil {
                 t.Log(err)
                 continue
@@ -237,11 +289,11 @@ func TestDownloadAttachment(t *testing.T) {
 }
 
 func TestSendMail(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    mailAcc, err := account.CreateAddressRandom(Options{})
+    mailAcc, err := account.CreateAddressRandom(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -251,7 +303,7 @@ func TestSendMail(t *testing.T) {
         return
     }
     defer file.Close()
-    res, err := account.SendMail(OptionsSendMail{
+    res, err := account.SendMail(context.Background(), SendMailOptions{
         Files: []UploadFileData{
             {Filename: "hello.txt", FileBody: file},
             {Filename: "hello2.txt", BufferBody: bytes.NewBuffer([]byte("Hello2"))},
@@ -264,11 +316,11 @@ func TestSendMail(t *testing.T) {
 }
 
 func TestGetMailDomains(t *testing.T) {
-    account, err := NewAccount(Options{})
+    account, err := NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
-    domains, err := account.GetMailDomains(Options{})
+    domains, err := account.GetMailDomains(context.Background())
     if err != nil {
         t.Fatal(err)
     }
