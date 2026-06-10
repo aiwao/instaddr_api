@@ -25,13 +25,6 @@ client := instaddr.NewClient(instaddr.ClientOptions{
 })
 ```
 
-You can also use the package-level default client.
-
-```go
-acc, err := instaddr.NewAccount(ctx)
-if err != nil ...
-```
-
 ## Context
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

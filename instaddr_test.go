@@ -22,6 +22,10 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 type contextKey string
 
+func newTestClient() *Client {
+    return NewClient(ClientOptions{})
+}
+
 func TestClientContext(t *testing.T) {
     jar, err := cookiejar.New(nil)
     if err != nil {
@@ -62,7 +66,7 @@ func TestClientContext(t *testing.T) {
 }
 
 func TestNewAccount(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -73,7 +77,7 @@ func TestNewAccount(t *testing.T) {
 }
 
 func TestGetAuthInfo(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -85,7 +89,7 @@ func TestGetAuthInfo(t *testing.T) {
 }
 
 func TestUpdateMailAccountList(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -113,7 +117,7 @@ func TestUpdateMailAccountList(t *testing.T) {
 }
 
 func TestLoginAccount(t *testing.T) {
-    acc1, err := NewAccount(context.Background())
+    acc1, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -137,7 +141,7 @@ func TestLoginAccount(t *testing.T) {
         t.Log(mailAcc.Address)
     }
 
-    acc2, err := LoginAccount(context.Background(), info)
+    acc2, err := newTestClient().LoginAccount(context.Background(), info)
     if err != nil {
         t.Fatal(err)
     }
@@ -153,7 +157,7 @@ func TestLoginAccount(t *testing.T) {
 }
 
 func TestCreateAddressWithExpiration(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -165,7 +169,7 @@ func TestCreateAddressWithExpiration(t *testing.T) {
 }
 
 func TestCreateAddressWithDomainAndName(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -186,7 +190,7 @@ func TestCreateAddressWithDomainAndName(t *testing.T) {
 }
 
 func TestCreateAddressRandom(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -198,7 +202,7 @@ func TestCreateAddressRandom(t *testing.T) {
 }
 
 func TestSearchMail(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -221,7 +225,7 @@ func TestSearchMail(t *testing.T) {
 }
 
 func TestViewMail(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -252,7 +256,7 @@ func TestViewMail(t *testing.T) {
 }
 
 func TestDownloadAttachment(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -289,7 +293,7 @@ func TestDownloadAttachment(t *testing.T) {
 }
 
 func TestSendMail(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }
@@ -316,7 +320,7 @@ func TestSendMail(t *testing.T) {
 }
 
 func TestGetMailDomains(t *testing.T) {
-    account, err := NewAccount(context.Background())
+    account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
         t.Fatal(err)
     }

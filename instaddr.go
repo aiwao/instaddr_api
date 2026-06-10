@@ -69,8 +69,6 @@ func NewClient(o ClientOptions) *Client {
     }
 }
 
-var defaultClient = NewClient(ClientOptions{})
-
 func (c *Client) ua() string {
     if c == nil || c.randomUserAgent || c.userAgent == "" {
         return randUA()
@@ -92,10 +90,7 @@ func (c *Client) httpClientWithJar(jar *cookiejar.Jar) *http.Client {
 }
 
 func (a *Account) apiClient() *Client {
-    if a.client != nil {
-        return a.client
-    }
-    return defaultClient
+    return a.client
 }
 
 type requestConfig struct {
@@ -105,9 +100,6 @@ type requestConfig struct {
 }
 
 func newRequestConfig(apiClient *Client, ctx context.Context, jar *cookiejar.Jar) requestConfig {
-    if apiClient == nil {
-        apiClient = defaultClient
-    }
     return requestConfig{
         apiClient: apiClient,
         context:   ctx,
@@ -128,11 +120,6 @@ func (o requestConfig) ctx() context.Context {
         return o.context
     }
     return context.Background()
-}
-
-// NewAccount Create new Account
-func NewAccount(ctx context.Context) (*Account, error) {
-    return defaultClient.NewAccount(ctx)
 }
 
 // NewAccount Create new Account
@@ -322,11 +309,6 @@ func (client *Client) NewAccount(ctx context.Context) (*Account, error) {
 type AuthInfo struct {
     AccountID string
     Password  string
-}
-
-// LoginAccount Login to Account with AuthInfo
-func LoginAccount(ctx context.Context, authInfo AuthInfo) (*Account, error) {
-    return defaultClient.LoginAccount(ctx, authInfo)
 }
 
 // LoginAccount Login to Account with AuthInfo
