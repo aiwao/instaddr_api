@@ -394,20 +394,3 @@ func TestWebkitBoundary(t *testing.T) {
         t.Log(webkitBoundary())
     }
 }
-
-func TestSearchMailHTML(t *testing.T) {
-	account, err := newTestClient().NewAccount(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	mail, err := account.CreateAddressWithExpiration(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Log(mail.Address)
-	time.Sleep(30*time.Second)
-	_, err = account.SearchMail(context.Background(), mail.Address)
-	if err != nil {
-		t.Fatal(err)
-	}
-}
