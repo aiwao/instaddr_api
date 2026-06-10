@@ -2,6 +2,7 @@ package instaddr
 
 import (
     "bytes"
+    "context"
     "encoding/json"
     "errors"
     "fmt"
@@ -42,35 +43,93 @@ type Account struct {
     UIDencSeted     string
     MailAccountList []MailAccount
     Jar             *cookiejar.Jar
+    client          *Client
 }
 
-type Options struct {
-    Client          *http.Client
+// ClientOptions configures a Client.
+type ClientOptions struct {
+    HTTPClient      *http.Client
     UserAgent       string
     RandomUserAgent bool
 }
 
-func (o *Options) ua() string {
-    if o.RandomUserAgent || o.UserAgent == "" {
-        return randUA()
-    }
-    return o.UserAgent
+// Client is an instaddr API client.
+type Client struct {
+    httpClient      *http.Client
+    userAgent       string
+    randomUserAgent bool
 }
 
-func (o *Options) client() *http.Client {
-    if o.Client != nil {
-        return o.Client
+// NewClient creates a new API client.
+func NewClient(o ClientOptions) *Client {
+    return &Client{
+        httpClient:      o.HTTPClient,
+        userAgent:       o.UserAgent,
+        randomUserAgent: o.RandomUserAgent,
     }
-    return http.DefaultClient
+}
+
+func (c *Client) ua() string {
+    if c == nil || c.randomUserAgent || c.userAgent == "" {
+        return randUA()
+    }
+    return c.userAgent
+}
+
+func (c *Client) httpClientWithJar(jar *cookiejar.Jar) *http.Client {
+    httpClient := http.DefaultClient
+    if c != nil && c.httpClient != nil {
+        httpClient = c.httpClient
+    }
+    if jar == nil {
+        return httpClient
+    }
+    clientWithJar := *httpClient
+    clientWithJar.Jar = jar
+    return &clientWithJar
+}
+
+func (a *Account) apiClient() *Client {
+    return a.client
+}
+
+type requestConfig struct {
+    apiClient *Client
+    context   context.Context
+    jar       *cookiejar.Jar
+}
+
+func newRequestConfig(apiClient *Client, ctx context.Context, jar *cookiejar.Jar) requestConfig {
+    return requestConfig{
+        apiClient: apiClient,
+        context:   ctx,
+        jar:       jar,
+    }
+}
+
+func (o requestConfig) ua() string {
+    return o.apiClient.ua()
+}
+
+func (o requestConfig) httpClient() *http.Client {
+    return o.apiClient.httpClientWithJar(o.jar)
+}
+
+func (o requestConfig) ctx() context.Context {
+    if o.context != nil {
+        return o.context
+    }
+    return context.Background()
 }
 
 // NewAccount Create new Account
-func NewAccount(o Options) (*Account, error) {
-    c := o.client()
+func (client *Client) NewAccount(ctx context.Context) (*Account, error) {
     jar, err := cookiejar.New(nil)
     if err != nil {
         return nil, err
     }
+    o := newRequestConfig(client, ctx, jar)
+    c := o.httpClient()
     parse, err := url.Parse(baseURL)
     if err != nil {
         return nil, err
@@ -81,7 +140,6 @@ func NewAccount(o Options) (*Account, error) {
         MaxAge:  63072000,
         Expires: time.Now().Add(63072000 * time.Second),
     }})
-    c.Jar = jar
     //Get csrf_token
     csrf := ""
     {
@@ -95,7 +153,7 @@ func NewAccount(o Options) (*Account, error) {
         q.Set("version", version)
         q.Set("request_unread", "1")
         parse.RawQuery = q.Encode()
-        req, err := http.NewRequest("GET", parse.String(), nil)
+        req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
         if err != nil {
             return nil, err
         }
@@ -129,7 +187,7 @@ func NewAccount(o Options) (*Account, error) {
         q.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
         q.Set("version", version)
         parse.RawQuery = q.Encode()
-        req, err := http.NewRequest("GET", parse.String(), nil)
+        req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
         if err != nil {
             return nil, err
         }
@@ -178,7 +236,7 @@ func NewAccount(o Options) (*Account, error) {
         form.Set("UID", uid)
         form.Set("MAIL_NOW_NEW_UID", newUID)
         form.Set("t", timeStr)
-        req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+        req, err := http.NewRequestWithContext(o.ctx(), "POST", parse.String(), strings.NewReader(form.Encode()))
         if err != nil {
             return nil, err
         }
@@ -211,7 +269,7 @@ func NewAccount(o Options) (*Account, error) {
         }
         form := url.Values{}
         form.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
-        req, err := http.NewRequest("GET", parse.String(), nil)
+        req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
         if err != nil {
             return nil, err
         }
@@ -244,6 +302,7 @@ func NewAccount(o Options) (*Account, error) {
         UIDencSeted:     uiDencSeted,
         MailAccountList: []MailAccount{},
         Jar:             jar,
+        client:          client,
     }, nil
 }
 
@@ -253,13 +312,13 @@ type AuthInfo struct {
 }
 
 // LoginAccount Login to Account with AuthInfo
-func LoginAccount(o Options, authInfo AuthInfo) (*Account, error) {
-    acc, err := NewAccount(o)
+func (client *Client) LoginAccount(ctx context.Context, authInfo AuthInfo) (*Account, error) {
+    acc, err := client.NewAccount(ctx)
     if err != nil {
         return nil, err
     }
-    c := o.client()
-    c.Jar = acc.Jar
+    o := newRequestConfig(client, ctx, acc.Jar)
+    c := o.httpClient()
 
     parse, err := url.Parse(indexURL)
     if err != nil {
@@ -275,7 +334,7 @@ func LoginAccount(o Options, authInfo AuthInfo) (*Account, error) {
     form.Set("password", authInfo.Password)
     form.Set("syncconfirm", "yes")
     {
-        req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+        req, err := http.NewRequestWithContext(o.ctx(), "POST", parse.String(), strings.NewReader(form.Encode()))
         if err != nil {
             return nil, err
         }
@@ -313,9 +372,9 @@ func LoginAccount(o Options, authInfo AuthInfo) (*Account, error) {
 }
 
 // GetAuthInfo Get Account's ID and Password
-func (a *Account) GetAuthInfo(o Options) (AuthInfo, error) {
-    c := o.client()
-    c.Jar = a.Jar
+func (a *Account) GetAuthInfo(ctx context.Context) (AuthInfo, error) {
+    o := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := o.httpClient()
     parse, err := url.Parse(indexURL)
     info := AuthInfo{}
     if err != nil {
@@ -328,7 +387,7 @@ func (a *Account) GetAuthInfo(o Options) (AuthInfo, error) {
     q.Set("noindex", "1")
     q.Set("version", version)
     parse.RawQuery = q.Encode()
-    req, err := http.NewRequest("GET", parse.String(), nil)
+    req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
     if err != nil {
         return info, err
     }
@@ -366,9 +425,9 @@ type MailAccount struct {
 }
 
 // UpdateMailAccountList Get all MailAccount List from Account
-func (a *Account) UpdateMailAccountList(o Options) ([]MailAccount, error) {
-    c := o.client()
-    c.Jar = a.Jar
+func (a *Account) UpdateMailAccountList(ctx context.Context) ([]MailAccount, error) {
+    o := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := o.httpClient()
     parse, err := url.Parse(addrListURL)
     list := []MailAccount{}
     if err != nil {
@@ -380,7 +439,7 @@ func (a *Account) UpdateMailAccountList(o Options) ([]MailAccount, error) {
     q.Set("nopost", "1")
     q.Set("_", strconv.FormatInt(currentTime-rand.Int64N(1000), 10))
     parse.RawQuery = q.Encode()
-    req, err := http.NewRequest("GET", parse.String(), nil)
+    req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
     if err != nil {
         return nil, err
     }
@@ -407,9 +466,9 @@ func (a *Account) UpdateMailAccountList(o Options) ([]MailAccount, error) {
 }
 
 // CreateAddressWithExpiration Create MailAccount with expiration
-func (a *Account) CreateAddressWithExpiration(o Options) (MailAccount, error) {
-    c := o.client()
-    c.Jar = a.Jar
+func (a *Account) CreateAddressWithExpiration(ctx context.Context) (MailAccount, error) {
+    o := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := o.httpClient()
     parse, err := url.Parse(indexURL)
     if err != nil {
         return MailAccount{}, err
@@ -423,7 +482,7 @@ func (a *Account) CreateAddressWithExpiration(o Options) (MailAccount, error) {
     q.Set("recaptcha_token", "")
     q.Set("_", strconv.FormatInt(time.Now().Unix(), 10))
     parse.RawQuery = q.Encode()
-    req, err := http.NewRequest("GET", parse.String(), nil)
+    req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
     if err != nil {
         return MailAccount{}, err
     }
@@ -451,17 +510,10 @@ func (a *Account) CreateAddressWithExpiration(o Options) (MailAccount, error) {
     return mailAcc, nil
 }
 
-// OptionsWithName If you don't set the Name, the Name will be random
-// Max Name length is 39
-type OptionsWithName struct {
-    Name string
-    Options
-}
-
 // CreateAddressWithDomainAndName Create MailAccount with domain and name. name is optional
-func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain string) (MailAccount, error) {
-    c := o.client()
-    c.Jar = a.Jar
+func (a *Account) CreateAddressWithDomainAndName(ctx context.Context, domain, name string) (MailAccount, error) {
+    o := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := o.httpClient()
     var prevTime int64
     {
         parse, err := url.Parse(indexURL)
@@ -475,11 +527,11 @@ func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain strin
         q.Set("csrf_token_check", a.CSRFToken)
         q.Set("csrf_subtoken_check", a.CSRFSubToken)
         q.Set("newdomain", domain)
-        q.Set("newuser", o.Name)
+        q.Set("newuser", name)
         prevTime = time.Now().Unix()
         q.Set("_", strconv.FormatInt(prevTime, 10))
         parse.RawQuery = q.Encode()
-        req, err := http.NewRequest("GET", parse.String(), nil)
+        req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
         if err != nil {
             return MailAccount{}, err
         }
@@ -504,11 +556,11 @@ func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain strin
     q.Set("csrf_token_check", a.CSRFToken)
     q.Set("csrf_subtoken_check", a.CSRFSubToken)
     q.Set("newdomain", domain)
-    q.Set("newuser", o.Name)
+    q.Set("newuser", name)
     q.Set("recaptcha_token", "")
     q.Set("_", strconv.FormatInt(prevTime+1, 10))
     parse.RawQuery = q.Encode()
-    req, err := http.NewRequest("GET", parse.String(), nil)
+    req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
     if err != nil {
         return MailAccount{}, err
     }
@@ -537,9 +589,9 @@ func (a *Account) CreateAddressWithDomainAndName(o OptionsWithName, domain strin
 }
 
 // CreateAddressRandom Create MailAccount by random
-func (a *Account) CreateAddressRandom(o Options) (MailAccount, error) {
-    c := o.client()
-    c.Jar = a.Jar
+func (a *Account) CreateAddressRandom(ctx context.Context) (MailAccount, error) {
+    o := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := o.httpClient()
     //Add mail and find address from response
     parse, err := url.Parse(indexURL)
     if err != nil {
@@ -554,7 +606,7 @@ func (a *Account) CreateAddressRandom(o Options) (MailAccount, error) {
     q.Set("recaptcha_token", "")
     q.Set("_", strconv.FormatInt(time.Now().Unix(), 10))
     parse.RawQuery = q.Encode()
-    req, err := http.NewRequest("GET", parse.String(), nil)
+    req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
     if err != nil {
         return MailAccount{}, err
     }
@@ -590,28 +642,22 @@ type MailPreview struct {
     ViewKey string
 }
 
-// SearchOptions Query is optional. if you don't set the Query, API will be responds all mails
-type SearchOptions struct {
-    Query string
-    Options
-}
-
 // SearchMail Search mails and returns MailPreview. if you wanna get content, call ViewMail with MailPreview
-func (a *Account) SearchMail(o SearchOptions) ([]MailPreview, error) {
-    c := o.client()
-    c.Jar = a.Jar
+func (a *Account) SearchMail(ctx context.Context, query string) ([]MailPreview, error) {
+    o := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := o.httpClient()
     parse, err := url.Parse(searchMailURL)
     if err != nil {
         return nil, err
     }
     q := url.Values{}
-    q.Set("q", o.Query)
+    q.Set("q", query)
     q.Set("nopost", "1")
     q.Set("csrf_token_check", a.CSRFToken)
     q.Set("csrf_subtoken_check", a.CSRFSubToken)
     q.Set("_", strconv.FormatInt(time.Now().Unix(), 10))
     parse.RawQuery = q.Encode()
-    req, err := http.NewRequest("GET", parse.String(), nil)
+    req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
     if err != nil {
         return nil, err
     }
@@ -678,9 +724,9 @@ type Mail struct {
 }
 
 // ViewMail View Mail
-func (a *Account) ViewMail(o Options, mailPreview MailPreview) (*Mail, error) {
-    c := o.client()
-    c.Jar = a.Jar
+func (a *Account) ViewMail(ctx context.Context, mailPreview MailPreview) (*Mail, error) {
+    o := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := o.httpClient()
     parse, err := url.Parse(viewMailURL)
     if err != nil {
         return nil, err
@@ -689,7 +735,7 @@ func (a *Account) ViewMail(o Options, mailPreview MailPreview) (*Mail, error) {
     form.Set("num", mailPreview.MailID)
     form.Set("key", mailPreview.ViewKey)
     form.Set("noscroll", "1")
-    req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+    req, err := http.NewRequestWithContext(o.ctx(), "POST", parse.String(), strings.NewReader(form.Encode()))
     if err != nil {
         return nil, err
     }
@@ -740,9 +786,9 @@ func (a *Account) ViewMail(o Options, mailPreview MailPreview) (*Mail, error) {
 }
 
 // DownloadAttachment Download Attachment
-func (a *Account) DownloadAttachment(o Options, attachment Attachment) ([]byte, error) {
-    c := o.client()
-    c.Jar = a.Jar
+func (a *Account) DownloadAttachment(ctx context.Context, attachment Attachment) ([]byte, error) {
+    o := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := o.httpClient()
     parse, err := url.Parse(openAttachURL)
     if err != nil {
         return nil, err
@@ -754,7 +800,7 @@ func (a *Account) DownloadAttachment(o Options, attachment Attachment) ([]byte, 
     q.Set("filekey", attachment.FileKey)
     q.Set("share_id", "")
     parse.RawQuery = q.Encode()
-    req, err := http.NewRequest("GET", parse.String(), nil)
+    req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
     if err != nil {
         return nil, err
     }
@@ -785,9 +831,9 @@ type SendMailResponse struct {
     Msg    string `json:"msg"`
 }
 
-type OptionsSendMail struct {
+// SendMailOptions configures SendMail.
+type SendMailOptions struct {
     Files []UploadFileData
-    Options
 }
 
 type fileUploadInfo struct {
@@ -798,9 +844,9 @@ type fileUploadInfo struct {
 }
 
 // SendMail Send mail
-func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, content, to string) (*SendMailResponse, error) {
-    c := o.client()
-    c.Jar = a.Jar
+func (a *Account) SendMail(ctx context.Context, o SendMailOptions, mailAccount MailAccount, subject, content, to string) (*SendMailResponse, error) {
+    reqOptions := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := reqOptions.httpClient()
 
     //Get hash and uuid
     hash := ""
@@ -816,11 +862,11 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, 
         q.Set("t", strconv.FormatInt(startTime.Unix(), 10))
         q.Set("version", version)
         parse.RawQuery = q.Encode()
-        req, err := http.NewRequest("GET", parse.String(), nil)
+        req, err := http.NewRequestWithContext(reqOptions.ctx(), "GET", parse.String(), nil)
         if err != nil {
             return nil, err
         }
-        req.Header.Set("User-Agent", o.ua())
+        req.Header.Set("User-Agent", reqOptions.ua())
         req.Header.Set("X-Requested-With", xRequestWith)
         res, err := c.Do(req)
         if err != nil {
@@ -909,12 +955,12 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, 
                 form.Set("file_hash", hash)
                 form.Set("csrf_token_check", a.CSRFToken)
                 form.Set("t", strconv.FormatInt(time.Now().Unix(), 10))
-                req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+                req, err := http.NewRequestWithContext(reqOptions.ctx(), "POST", parse.String(), strings.NewReader(form.Encode()))
                 if err != nil {
                     return nil, err
                 }
                 req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                req.Header.Set("User-Agent", o.ua())
+                req.Header.Set("User-Agent", reqOptions.ua())
                 req.Header.Set("X-Requested-With", xRequestWith)
                 res, err := c.Do(req)
                 if err != nil {
@@ -934,12 +980,12 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, 
                 form.Set("totalcount", strconv.Itoa(len(infoList)))
                 form.Set("totalsize", strconv.FormatInt(totalSize, 10))
                 form.Set("upload_files", payloadPrepare)
-                req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+                req, err := http.NewRequestWithContext(reqOptions.ctx(), "POST", parse.String(), strings.NewReader(form.Encode()))
                 if err != nil {
                     return nil, err
                 }
                 req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                req.Header.Set("User-Agent", o.ua())
+                req.Header.Set("User-Agent", reqOptions.ua())
                 req.Header.Set("X-Requested-With", xRequestWith)
                 res, err := c.Do(req)
                 if err != nil {
@@ -992,12 +1038,12 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, 
                 if err != nil {
                     return nil, err
                 }
-                req, err := http.NewRequest("POST", parse.String(), b)
+                req, err := http.NewRequestWithContext(reqOptions.ctx(), "POST", parse.String(), b)
                 if err != nil {
                     return nil, err
                 }
                 req.Header.Set("Content-Type", mw.FormDataContentType())
-                req.Header.Set("User-Agent", o.ua())
+                req.Header.Set("User-Agent", reqOptions.ua())
                 req.Header.Set("X-Requested-With", xRequestWith)
                 res, err := c.Do(req)
                 if err != nil {
@@ -1027,12 +1073,12 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, 
         form.Set("sendmail_content", content)
         form.Set("sendmail_content_add", "")
         form.Set("file_hash", hash)
-        req, err := http.NewRequest("POST", parse.String(), strings.NewReader(form.Encode()))
+        req, err := http.NewRequestWithContext(reqOptions.ctx(), "POST", parse.String(), strings.NewReader(form.Encode()))
         if err != nil {
             return nil, err
         }
         req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-        req.Header.Set("User-Agent", o.ua())
+        req.Header.Set("User-Agent", reqOptions.ua())
         req.Header.Set("X-Requested-With", xRequestWith)
         res, err := c.Do(req)
         if err != nil {
@@ -1052,10 +1098,10 @@ func (a *Account) SendMail(o OptionsSendMail, mailAccount MailAccount, subject, 
 }
 
 // GetMailDomains Get available domains in CreateAddressWithDomainAndName
-func (a *Account) GetMailDomains(o Options) ([]string, error) {
+func (a *Account) GetMailDomains(ctx context.Context) ([]string, error) {
     domains := []string{}
-    c := o.client()
-    c.Jar = a.Jar
+    o := newRequestConfig(a.apiClient(), ctx, a.Jar)
+    c := o.httpClient()
     parse, err := url.Parse(indexURL)
     if err != nil {
         return nil, err
@@ -1066,7 +1112,7 @@ func (a *Account) GetMailDomains(o Options) ([]string, error) {
     q.Set("version", version)
     q.Set("request_unread", "1")
     parse.RawQuery = q.Encode()
-    req, err := http.NewRequest("GET", parse.String(), nil)
+    req, err := http.NewRequestWithContext(o.ctx(), "GET", parse.String(), nil)
     if err != nil {
         return nil, err
     }
