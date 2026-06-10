@@ -65,6 +65,54 @@ func TestClientContext(t *testing.T) {
     }
 }
 
+func TestSearchMailPreviewIncludesTime(t *testing.T) {
+    jar, err := cookiejar.New(nil)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    client := &http.Client{
+        Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+            body := `
+                <script>mailnumlist = "123";</script>
+                <a id="link_maildata_123">
+                    <div class="font_gray"> 15:29 (11s ago) </div>
+                    <div id="area_mail_title_123"><b><span>Hello</span></b></div>
+                    <div><div>
+                        <div>from@example.com</div>
+                        <div>to@example.com</div>
+                    </div></div>
+                </a>
+                <script>openMailData('123', 'abcdef0123456789', 'from=from%40example.com;to=to%40example.com;');</script>
+            `
+            return &http.Response{
+                StatusCode: http.StatusOK,
+                Header:     make(http.Header),
+                Body:       io.NopCloser(strings.NewReader(body)),
+                Request:    req,
+            }, nil
+        }),
+    }
+    apiClient := NewClient(ClientOptions{HTTPClient: client})
+    account := &Account{
+        CSRFToken:    "csrf",
+        CSRFSubToken: "csrf-sub",
+        Jar:          jar,
+        client:       apiClient,
+    }
+
+    previews, err := account.SearchMail(context.Background(), "Hello codex")
+    if err != nil {
+        t.Fatal(err)
+    }
+    if len(previews) != 1 {
+        t.Fatalf("len(previews) = %d, want 1", len(previews))
+    }
+    if previews[0].Time != "15:29 (11s ago)" {
+        t.Fatalf("preview time = %q, want %q", previews[0].Time, "15:29 (11s ago)")
+    }
+}
+
 func TestNewAccount(t *testing.T) {
     account, err := newTestClient().NewAccount(context.Background())
     if err != nil {
@@ -221,6 +269,7 @@ func TestSearchMail(t *testing.T) {
         t.Log(preview.Subject)
         t.Log(preview.From)
         t.Log(preview.To)
+        t.Log(preview.Time)
     }
 }
 
@@ -344,4 +393,21 @@ func TestWebkitBoundary(t *testing.T) {
     for i := 0; i < 10; i++ {
         t.Log(webkitBoundary())
     }
+}
+
+func TestSearchMailHTML(t *testing.T) {
+	account, err := newTestClient().NewAccount(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mail, err := account.CreateAddressWithExpiration(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(mail.Address)
+	time.Sleep(30*time.Second)
+	_, err = account.SearchMail(context.Background(), mail.Address)
+	if err != nil {
+		t.Fatal(err)
+	}
 }

@@ -639,6 +639,7 @@ type MailPreview struct {
     Subject string
     From    string
     To      string
+    Time    string
     ViewKey string
 }
 
@@ -700,6 +701,10 @@ func (a *Account) SearchMail(ctx context.Context, query string) ([]MailPreview, 
         toNode := htmlquery.FindOne(doc, fmt.Sprintf("//*[@id='link_maildata_%s']/div[3]/div/div[2]", mailNum))
         if toNode != nil {
             preview.To = htmlquery.InnerText(toNode)
+        }
+        timeNode := htmlquery.FindOne(doc, fmt.Sprintf("//*[@id='link_maildata_%s']/div[1]", mailNum))
+        if timeNode != nil {
+            preview.Time = strings.TrimSpace(htmlquery.InnerText(timeNode))
         }
         viewKeyRegex := regexp.MustCompile(fmt.Sprintf(`openMailData\('%s', '([a-f0-9]+)'`, mailNum))
         viewKeyMatch := viewKeyRegex.FindStringSubmatch(string(b))
