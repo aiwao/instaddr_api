@@ -75,14 +75,17 @@ func TestSearchMailPreviewIncludesTime(t *testing.T) {
         Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
             body := `
                 <script>mailnumlist = "123";</script>
-                <a id="link_maildata_123">
-                    <div class="font_gray"> 15:29 (11s ago) </div>
-                    <div id="area_mail_title_123"><b><span>Hello</span></b></div>
-                    <div><div>
-                        <div>from@example.com</div>
-                        <div>to@example.com</div>
-                    </div></div>
-                </a>
+                <a id="link_searchMailByDate_2026_06_10">2026年06月10日 (水曜日)</a>
+                <div id="area_mail_123">
+                    <a id="link_maildata_123">
+                        <div class="font_gray"> 15時29分 (11秒前) </div>
+                        <div id="area_mail_title_123"><b><span>Hello</span></b></div>
+                        <div><div>
+                            <div>from@example.com</div>
+                            <div>to@example.com</div>
+                        </div></div>
+                    </a>
+                </div>
                 <script>openMailData('123', 'abcdef0123456789', 'from=from%40example.com;to=to%40example.com;');</script>
             `
             return &http.Response{
@@ -108,8 +111,9 @@ func TestSearchMailPreviewIncludesTime(t *testing.T) {
     if len(previews) != 1 {
         t.Fatalf("len(previews) = %d, want 1", len(previews))
     }
-    if previews[0].Time != "15:29 (11s ago)" {
-        t.Fatalf("preview time = %q, want %q", previews[0].Time, "15:29 (11s ago)")
+    expected := time.Date(2026, 6, 10, 15, 29, 0, 0, time.UTC)
+    if !previews[0].Time.Equal(expected) {
+        t.Fatalf("preview time = %v, want %v", previews[0].Time, expected)
     }
 }
 

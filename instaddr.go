@@ -639,7 +639,7 @@ type MailPreview struct {
     Subject string
     From    string
     To      string
-    Time    string
+    Time    time.Time
     ViewKey string
 }
 
@@ -703,8 +703,17 @@ func (a *Account) SearchMail(ctx context.Context, query string) ([]MailPreview, 
             preview.To = htmlquery.InnerText(toNode)
         }
         timeNode := htmlquery.FindOne(doc, fmt.Sprintf("//*[@id='link_maildata_%s']/div[1]", mailNum))
-        if timeNode != nil {
-            preview.Time = strings.TrimSpace(htmlquery.InnerText(timeNode))
+        dateNode := htmlquery.FindOne(doc, fmt.Sprintf("//*[@id='area_mail_%s']/preceding::a[starts-with(@id, 'link_searchMailByDate_')][1]", mailNum))
+        if timeNode != nil && dateNode != nil {
+            parsedTime, ok := parseMailPreviewTime(
+                htmlquery.SelectAttr(dateNode, "id"),
+                htmlquery.InnerText(dateNode),
+                htmlquery.InnerText(timeNode),
+                a.mailPreviewLocation(),
+            )
+            if ok {
+                preview.Time = parsedTime
+            }
         }
         viewKeyRegex := regexp.MustCompile(fmt.Sprintf(`openMailData\('%s', '([a-f0-9]+)'`, mailNum))
         viewKeyMatch := viewKeyRegex.FindStringSubmatch(string(b))
@@ -714,6 +723,101 @@ func (a *Account) SearchMail(ctx context.Context, query string) ([]MailPreview, 
         mailPreviewList = append(mailPreviewList, preview)
     }
     return mailPreviewList, nil
+}
+
+func (a *Account) mailPreviewLocation() *time.Location {
+    if a == nil || a.Jar == nil {
+        return time.UTC
+    }
+    parse, err := url.Parse(baseURL)
+    if err != nil {
+        return time.UTC
+    }
+    for _, cookie := range a.Jar.Cookies(parse) {
+        if cookie.Name != "cookie_timezone" || cookie.Value == "" {
+            continue
+        }
+        timezone := cookie.Value
+        if unescaped, err := url.QueryUnescape(cookie.Value); err == nil {
+            timezone = unescaped
+        }
+        loc, err := time.LoadLocation(timezone)
+        if err == nil {
+            return loc
+        }
+    }
+    return time.UTC
+}
+
+func parseMailPreviewTime(dateID, dateText, timeText string, loc *time.Location) (time.Time, bool) {
+    if loc == nil {
+        loc = time.UTC
+    }
+
+    year, month, day, ok := parseMailPreviewDate(dateID, dateText)
+    if !ok {
+        return time.Time{}, false
+    }
+
+    timeRegex := regexp.MustCompile(`(\d{1,2})\s*時\s*(\d{1,2})\s*分|(\d{1,2})\s*:\s*(\d{1,2})`)
+    timeMatch := timeRegex.FindStringSubmatch(timeText)
+    if len(timeMatch) == 0 {
+        return time.Time{}, false
+    }
+
+    hourStr := timeMatch[1]
+    minuteStr := timeMatch[2]
+    if hourStr == "" {
+        hourStr = timeMatch[3]
+        minuteStr = timeMatch[4]
+    }
+    hour, err := strconv.Atoi(hourStr)
+    if err != nil {
+        return time.Time{}, false
+    }
+    minute, err := strconv.Atoi(minuteStr)
+    if err != nil {
+        return time.Time{}, false
+    }
+    if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+        return time.Time{}, false
+    }
+
+    return time.Date(year, time.Month(month), day, hour, minute, 0, 0, loc), true
+}
+
+func parseMailPreviewDate(dateID, dateText string) (int, int, int, bool) {
+    dateIDRegex := regexp.MustCompile(`link_searchMailByDate_(\d{4})_(\d{1,2})_(\d{1,2})`)
+    dateIDMatch := dateIDRegex.FindStringSubmatch(dateID)
+    if len(dateIDMatch) == 4 {
+        return parseMailPreviewDateParts(dateIDMatch[1], dateIDMatch[2], dateIDMatch[3])
+    }
+
+    dateTextRegex := regexp.MustCompile(`(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日`)
+    dateTextMatch := dateTextRegex.FindStringSubmatch(dateText)
+    if len(dateTextMatch) == 4 {
+        return parseMailPreviewDateParts(dateTextMatch[1], dateTextMatch[2], dateTextMatch[3])
+    }
+    return 0, 0, 0, false
+}
+
+func parseMailPreviewDateParts(yearStr, monthStr, dayStr string) (int, int, int, bool) {
+    year, err := strconv.Atoi(yearStr)
+    if err != nil {
+        return 0, 0, 0, false
+    }
+    month, err := strconv.Atoi(monthStr)
+    if err != nil {
+        return 0, 0, 0, false
+    }
+    day, err := strconv.Atoi(dayStr)
+    if err != nil {
+        return 0, 0, 0, false
+    }
+    if month < 1 || month > 12 || day < 1 || day > 31 {
+        return 0, 0, 0, false
+    }
+    return year, month, day, true
 }
 
 type Attachment struct {
